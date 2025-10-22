@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Health LLM System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f4f8;
+            color: #333;
+        }
+        .auth-container {
+            background-color: #fff;
+            padding: 3rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        .auth-container h2 {
+            margin-top: 0;
+            margin-bottom: 1.5rem;
+            color: #2d3748;
+            font-size: 1.75rem;
+        }
+        .input-group {
+            margin-bottom: 1.25rem;
+            text-align: left;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #4a5568;
+            font-weight: 500;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.75rem;
+            font-size: 1rem;
+            box-sizing: border-box;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .input-group input:focus {
+            outline: none;
+            border-color: #4299e1;
+            box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.5);
+        }
+        .auth-btn {
+            width: 100%;
+            padding: 1rem;
+            border: none;
+            border-radius: 0.75rem;
+            background-color: #4299e1;
+            color: white;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+        }
+        .auth-btn:hover {
+            background-color: #3182ce;
+            transform: translateY(-2px);
+        }
+        .toggle-form {
+            margin-top: 1.5rem;
+            font-size: 0.9rem;
+        }
+        .toggle-form a {
+            color: #4299e1;
+            text-decoration: none;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .error-message {
+            color: #e53e3e;
+            background-color: #fed7d7;
+            border: 1px solid #f56565;
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            margin-top: 1.5rem;
+            display: none; /* Hidden by default */
+        }
+        /* Hide one form by default */
+        #register-form {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <!-- Login Form -->
+        <div id="login-form">
+            <h2>Welcome Back!</h2>
+            <form onsubmit="handleLogin(event)">
+                <div class="input-group">
+                    <label for="login-username">Username</label>
+                    <input type="text" id="login-username" required>
+                </div>
+                <div class="input-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" required>
+                </div>
+                <button type="submit" class="auth-btn">Login</button>
+            </form>
+            <p class="toggle-form">
+                Don't have an account? <a onclick="toggleForms()">Register here</a>
+            </p>
+        </div>
+
+        <!-- Registration Form -->
+        <div id="register-form">
+            <h2>Create Account</h2>
+            <form onsubmit="handleRegister(event)">
+                <div class="input-group">
+                    <label for="register-username">Username</label>
+                    <input type="text" id="register-username" required>
+                </div>
+                <div class="input-group">
+                    <label for="register-password">Password</label>
+                    <input type="password" id="register-password" required>
+                </div>
+                <button type="submit" class="auth-btn">Register</button>
+            </form>
+            <p class="toggle-form">
+                Already have an account? <a onclick="toggleForms()">Login here</a>
+            </p>
+        </div>
+
+        <div id="error-message" class="error-message"></div>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+        const errorMessageDiv = document.getElementById('error-message');
+        const API_BASE_URL = 'http://127.0.0.1:5001/api';
+
+        // If user is already logged in, redirect them to the chat page
+        if (localStorage.getItem('accessToken')) {
+            window.location.href = 'index.html'; // Make sure your main chat file is named index.html
+        }
+        
+        function toggleForms() {
+            errorMessageDiv.style.display = 'none'; // Hide error on toggle
+            if (loginForm.style.display === 'none') {
+                loginForm.style.display = 'block';
+                registerForm.style.display = 'none';
+            } else {
+                loginForm.style.display = 'none';
+                registerForm.style.display = 'block';
+            }
+        }
+
+        function show_error(message) {
+            errorMessageDiv.textContent = message;
+            errorMessageDiv.style.display = 'block';
+        }
+
+        async function handleRegister(event) {
+            event.preventDefault();
+            const username = document.getElementById('register-username').value;
+            const password = document.getElementById('register-password').value;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Registration failed.');
+                }
+                
+                // On successful registration, switch to login form
+                alert('Registration successful! Please log in.');
+                toggleForms();
+
+            } catch (error) {
+                show_error(error.message);
+            }
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Login failed.');
+                }
+                
+                // On successful login, save the token and redirect
+                localStorage.setItem('accessToken', data.access_token);
+                window.location.href = 'index.html'; // Your main chat page
+
+            } catch (error) {
+                show_error(error.message);
+            }
+        }
+    </script>
+</body>
+</html>
