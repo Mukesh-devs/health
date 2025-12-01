@@ -24,6 +24,9 @@ pandas==2.2.0
 # HTTP Requests
 requests==2.31.0
 
+# PubMed Integration (Improvement 1)
+biopython==1.84
+
 # Database
 SQLAlchemy==2.0.43
 

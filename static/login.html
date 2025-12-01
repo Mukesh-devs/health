@@ -54,7 +54,7 @@
         }
         .input-group input:focus {
             outline: none;
-            border-color: #4299e1;
+            border-color: #c76dca;
             box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.5);
         }
         .auth-btn {
@@ -62,7 +62,7 @@
             padding: 1rem;
             border: none;
             border-radius: 0.75rem;
-            background-color: #4299e1;
+            background-color: #c76dca;
             color: white;
             font-size: 1rem;
             font-weight: bold;
@@ -70,7 +70,7 @@
             transition: background-color 0.3s, transform 0.2s;
         }
         .auth-btn:hover {
-            background-color: #3182ce;
+            background-color: #6f5083;
             transform: translateY(-2px);
         }
         .toggle-form {
@@ -149,7 +149,7 @@
 
         // If user is already logged in, redirect them to the chat page
         if (localStorage.getItem('accessToken')) {
-            window.location.href = 'index.html'; // Make sure your main chat file is named index.html
+            window.location.href = 'chat.html'; // Make sure your main chat file is named index.html
         }
         
         function toggleForms() {
@@ -213,9 +213,10 @@
                     throw new Error(data.error || 'Login failed.');
                 }
                 
-                // On successful login, save the token and redirect
+                // On successful login, save the token and username, then redirect
                 localStorage.setItem('accessToken', data.access_token);
-                window.location.href = 'index.html'; // Your main chat page
+                localStorage.setItem('username', username);
+                window.location.href = 'chat.html'; // Your main chat page
 
             } catch (error) {
                 show_error(error.message);

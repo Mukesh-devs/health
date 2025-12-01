@@ -12,7 +12,8 @@ class Config:
     
     # Gemini API Configuration
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-    GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={GEMINI_API_KEY}"
+    GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
     
     # Knowledge Graph paths
     KG_REL_PATH = os.environ.get('KG_REL_PATH', 'dataset/neo4j_rel.csv')

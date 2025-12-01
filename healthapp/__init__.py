@@ -46,6 +46,7 @@ def create_app(config_name='default'):
         from .kg_loader import load_knowledge_graph
         from .embedding import load_embeddings, set_kg_data, initialize_model
         from .metrics_logger import retrieval_logger
+        from .contradiction_detector import init_contradiction_detector
         
         print("Initializing knowledge graph and embeddings...")
         kg_df, nodes_df = load_knowledge_graph()
@@ -59,9 +60,16 @@ def create_app(config_name='default'):
         # Set KG data for triple validation
         set_kg_data(kg_df)
         
+        # Initialize contradiction detector (IMPROVEMENT 3)
+        print("Initializing contradiction detector...")
+        init_contradiction_detector(kg_df)
+        print("✓ Contradiction detector initialized!")
+        
         # Log startup retrieval metrics (will be called from embedding.py after first evaluation)
         print("Application initialized successfully!")
         print("Retrieval metrics will be logged at: retrieval_metrics.log")
         print("Query metrics will be logged at: query_metrics.jsonl")
+        print("⚡ Live PubMed integration: ENABLED")
+        print("⚠️  Contradiction detection: ENABLED")
     
     return app

@@ -5,6 +5,9 @@
 dataset/neo4j_rel.csv
 dataset/neo4j_node.csv
 
+#image
+*.png
+
 # Python
 __pycache__/
 *.py[cod]
@@ -65,3 +68,5 @@ cache/
 .pytest_cache/
 .coverage
 htmlcov/
+
+app_old.py
