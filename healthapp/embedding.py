@@ -9,6 +9,11 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from rapidfuzz import process, fuzz
 from flask import current_app
+import pickle
+import faiss
+
+faiss_index = None
+metadata = None
 
 # Global variables
 sentence_model = None
@@ -29,25 +34,36 @@ def initialize_model():
 
 def load_embeddings(nodes_dataframe):
     """Load or generate embeddings with caching (Apple Silicon optimized)"""
-    global entity_embeddings_matrix, entity_names_list, cui_list, nodes_df
-    
+    # global entity_embeddings_matrix, entity_names_list, cui_list, nodes_df
+    global faiss_index, metadata
+    global entity_names_list, cui_list, nodes_df
+
     nodes_df = nodes_dataframe
-    cache_path = current_app.config['EMBEDDINGS_CACHE_PATH']
-    
-    # Try to load cached embeddings
-    if os.path.exists(cache_path):
-        print("Loading cached embeddings...")
+    if (os.path.exists(current_app.config['FAISS_INDEX_PATH']) and os.path.exists(current_app.config['FAISS_METADATA_PATH'])):
+        print("Loading FAISS index...")
         start_time = time.time()
-        cache = np.load(cache_path, allow_pickle=True)
-        entity_embeddings_matrix = cache['embeddings']
-        entity_names_list = cache['names'].tolist()
-        cui_list = cache['cuis'].tolist()
+
+        faiss_index = faiss.read_index(
+            current_app.config['FAISS_INDEX_PATH']
+        )
+
+        with open(
+            current_app.config['FAISS_METADATA_PATH'],
+            'rb'
+        ) as f:
+            metadata = pickle.load(f)
+
+        entity_names_list = metadata["names"]
+        cui_list = metadata["cuis"]
+
         load_time = time.time() - start_time
-        
-        print(f"Loaded cached embeddings for {len(entity_names_list)} entities in {load_time:.2f}s")
-        
-        # Evaluate and log retrieval metrics
-        _evaluate_and_log_retrieval_metrics()
+
+        print(
+            f"Loaded FAISS index for "
+            f"{len(entity_names_list)} entities "
+            f"in {load_time:.2f}s"
+        )
+
         return
     
     # Generate embeddings if cache doesn't exist
@@ -86,15 +102,38 @@ def load_embeddings(nodes_dataframe):
     # Normalize for cosine similarity
     norms = np.linalg.norm(entity_embeddings_matrix, axis=1, keepdims=True)
     entity_embeddings_matrix = entity_embeddings_matrix / norms
-    
-    # Cache embeddings
-    print("Caching embeddings for future use...")
-    np.savez_compressed(
-        cache_path,
-        embeddings=entity_embeddings_matrix,
-        names=np.array(entity_names_list),
-        cuis=np.array(cui_list)
+        
+
+    dimension = entity_embeddings_matrix.shape[1]
+
+    faiss_index = faiss.IndexFlatIP(dimension)
+
+    faiss_index.add(entity_embeddings_matrix)
+
+    faiss.write_index(
+        faiss_index,
+        current_app.config['FAISS_INDEX_PATH']
     )
+
+    metadata = {
+        "names": entity_names_list,
+        "cuis": cui_list
+    }
+
+    with open(
+        current_app.config['FAISS_METADATA_PATH'],
+        "wb"
+    ) as f:
+        pickle.dump(metadata, f)
+
+    # Cache embeddings
+    # print("Caching embeddings for future use...")
+    # np.savez_compressed(
+    #     cache_path,
+    #     embeddings=entity_embeddings_matrix,
+    #     names=np.array(entity_names_list),
+    #     cuis=np.array(cui_list)
+    # )
     
     load_time = time.time() - start_time
     
@@ -149,7 +188,7 @@ def get_cui_from_name_semantic(entity_name, threshold=0.75, top_k=10):
     BLUE = '\033[94m'
     RESET = '\033[0m'
     
-    if not entity_name or entity_embeddings_matrix is None:
+    if not entity_name or faiss_index is None:
         return None
     
     start_time = time.time()
@@ -191,7 +230,7 @@ def get_cui_from_name_semantic(entity_name, threshold=0.75, top_k=10):
     
     print(f"{YELLOW}  Performing semantic search via embeddings...{RESET}")
     print(f"{BLUE}    Embedding cache: {len(entity_names_list):,} entities{RESET}")
-    print(f"{BLUE}    Embedding dimension: {entity_embeddings_matrix.shape[1]}{RESET}")
+    print(f"{BLUE}    Embedding dimension: {faiss_index.d}{RESET}")
     print(f"{BLUE}    Search threshold: {threshold:.2f}{RESET}")
     
     # Multi-query semantic search
@@ -209,27 +248,31 @@ def get_cui_from_name_semantic(entity_name, threshold=0.75, top_k=10):
         print(f"{BLUE}    Trying query variant {query_idx + 1}: '{query}'{RESET}")
             
         # Semantic search
-        query_embedding = model.encode([query], convert_to_numpy=True).astype('float32')
-        query_embedding = query_embedding / np.linalg.norm(query_embedding)
+        query_embedding = model.encode(
+            [query],
+            convert_to_numpy=True
+        ).astype("float32")
+
+        faiss.normalize_L2(query_embedding)
+
+        scores, ids = faiss_index.search(
+            query_embedding,
+            top_k
+        )
+        # top_indices = top_indices[np.argsort(-similarities[top_indices])]
         
-        # Vectorized cosine similarity
-        similarities = np.dot(entity_embeddings_matrix, query_embedding.T).flatten()
-        
-        # Get top_k indices
-        top_indices = np.argpartition(similarities, -top_k)[-top_k:]
-        top_indices = top_indices[np.argsort(-similarities[top_indices])]
-        
-        current_best = similarities[top_indices[0]]
-        current_best_cui = cui_list[top_indices[0]]
-        current_best_name = entity_names_list[top_indices[0]]
-        
+        current_best = scores[0][0]
+
+        current_best_cui = cui_list[ids[0][0]]
+
+        current_best_name = entity_names_list[ids[0][0]]        
         # Show top results for this query variant
         if query_idx == 0:  # Only show detailed results for main query
             print(f"{YELLOW}      Top {min(5, top_k)} candidates:{RESET}")
-            for i, idx in enumerate(top_indices[:5], 1):
+            for i, idx in enumerate(ids[0][:5], 1):
                 candidate_name = entity_names_list[idx]
                 candidate_cui = cui_list[idx]
-                candidate_sim = similarities[idx]
+                candidate_sim = scores[0][i - 1]
                 status = "✓" if candidate_sim >= threshold else "✗"
                 print(f"{BLUE}        {i}. [{status}] {candidate_name} (CUI: {candidate_cui}){RESET}")
                 print(f"{BLUE}           Similarity: {candidate_sim:.4f} ({candidate_sim*100:.2f}%){RESET}")
@@ -716,424 +759,424 @@ def generate_recommendations(entities_in_graph, max_recommendations=4):
     
     return list(recommendations)
 
-def _evaluate_and_log_retrieval_metrics():
-    """
-    Evaluate INFORMATION RETRIEVAL metrics using test queries and log to file
+# def _evaluate_and_log_retrieval_metrics():
+#     """
+#     Evaluate INFORMATION RETRIEVAL metrics using test queries and log to file
     
-    Dataset: test_queries.csv (33 Alzheimer's disease queries)
-    Metrics: Precision@K, Recall@K, F1@K, MRR, MAP, nDCG
-    """
-    try:
-        # Load test queries from dataset/test_queries.csv
-        test_file = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'test_queries.csv')
-        if not os.path.exists(test_file):
-            print(f"Test file not found: {test_file}")
-            return
+#     Dataset: test_queries.csv (33 Alzheimer's disease queries)
+#     Metrics: Precision@K, Recall@K, F1@K, MRR, MAP, nDCG
+#     """
+#     try:
+#         # Load test queries from dataset/test_queries.csv
+#         test_file = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'test_queries.csv')
+#         if not os.path.exists(test_file):
+#             print(f"Test file not found: {test_file}")
+#             return
         
-        test_queries = []
-        with open(test_file, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                test_queries.append({
-                    'query': row['query'],
-                    'expected_cuis': [cui.strip() for cui in row['expected_cuis'].split(',')]
-                })
+#         test_queries = []
+#         with open(test_file, 'r', encoding='utf-8') as f:
+#             reader = csv.DictReader(f)
+#             for row in reader:
+#                 test_queries.append({
+#                     'query': row['query'],
+#                     'expected_cuis': [cui.strip() for cui in row['expected_cuis'].split(',')]
+#                 })
         
-        print(f"📊 Evaluating Information Retrieval metrics on {len(test_queries)} test queries...")
-        print(f"📁 Dataset: test_queries.csv")
-        print(f"🔍 Entity Pool: {len(entity_names_list)} entities from neo4j_node.csv")
+#         print(f"📊 Evaluating Information Retrieval metrics on {len(test_queries)} test queries...")
+#         print(f"📁 Dataset: test_queries.csv")
+#         print(f"🔍 Entity Pool: {len(entity_names_list)} entities from neo4j_node.csv")
         
-        # ADAPTIVE_PRECISION strategy parameters
-        threshold = 0.88
-        top_k = 10  # Evaluate top-10 for comprehensive metrics
+#         # ADAPTIVE_PRECISION strategy parameters
+#         threshold = 0.88
+#         top_k = 10  # Evaluate top-10 for comprehensive metrics
         
-        # Information Retrieval Metrics
-        total_tp = 0  # True Positives (exact + soft matches)
-        total_fp = 0  # False Positives
-        total_fn = 0  # False Negatives
+#         # Information Retrieval Metrics
+#         total_tp = 0  # True Positives (exact + soft matches)
+#         total_fp = 0  # False Positives
+#         total_fn = 0  # False Negatives
         
-        total_precision_at_k = {1: 0, 3: 0, 5: 0, 10: 0}
-        total_recall_at_k = {1: 0, 3: 0, 5: 0, 10: 0}
-        total_f1_at_k = {1: 0, 3: 0, 5: 0, 10: 0}
+#         total_precision_at_k = {1: 0, 3: 0, 5: 0, 10: 0}
+#         total_recall_at_k = {1: 0, 3: 0, 5: 0, 10: 0}
+#         total_f1_at_k = {1: 0, 3: 0, 5: 0, 10: 0}
         
-        reciprocal_ranks = []  # For MRR (Mean Reciprocal Rank)
-        average_precisions = []  # For MAP (Mean Average Precision)
+#         reciprocal_ranks = []  # For MRR (Mean Reciprocal Rank)
+#         average_precisions = []  # For MAP (Mean Average Precision)
         
-        # Initialize detailed calculation log
-        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
-        os.makedirs(log_dir, exist_ok=True)
-        detailed_log_file = os.path.join(log_dir, 'retrieval_metrics_detailed_calculations.log')
-        detailed_log = open(detailed_log_file, 'w', encoding='utf-8')
+#         # Initialize detailed calculation log
+#         log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+#         os.makedirs(log_dir, exist_ok=True)
+#         detailed_log_file = os.path.join(log_dir, 'retrieval_metrics_detailed_calculations.log')
+#         detailed_log = open(detailed_log_file, 'w', encoding='utf-8')
         
-        # Write header to detailed log
-        detailed_log.write('='*100 + '\n')
-        detailed_log.write('DETAILED INFORMATION RETRIEVAL METRICS CALCULATION LOG\n')
-        detailed_log.write('='*100 + '\n')
-        detailed_log.write(f'Evaluation Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
-        detailed_log.write(f'Dataset: test_queries.csv ({len(test_queries)} queries)\n')
-        detailed_log.write(f'Entity Pool: neo4j_node.csv ({len(entity_names_list)} entities)\n')
-        detailed_log.write(f'Model: sentence-transformers/all-MiniLM-L6-v2\n')
-        detailed_log.write(f'Similarity Threshold: {threshold}\n')
-        detailed_log.write(f'Top-K Results: {top_k}\n')
-        detailed_log.write(f'Soft Matching: Enabled (0.5 credit for substring matches)\n')
-        detailed_log.write('='*100 + '\n\n')
+#         # Write header to detailed log
+#         detailed_log.write('='*100 + '\n')
+#         detailed_log.write('DETAILED INFORMATION RETRIEVAL METRICS CALCULATION LOG\n')
+#         detailed_log.write('='*100 + '\n')
+#         detailed_log.write(f'Evaluation Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
+#         detailed_log.write(f'Dataset: test_queries.csv ({len(test_queries)} queries)\n')
+#         detailed_log.write(f'Entity Pool: neo4j_node.csv ({len(entity_names_list)} entities)\n')
+#         detailed_log.write(f'Model: sentence-transformers/all-MiniLM-L6-v2\n')
+#         detailed_log.write(f'Similarity Threshold: {threshold}\n')
+#         detailed_log.write(f'Top-K Results: {top_k}\n')
+#         detailed_log.write(f'Soft Matching: Enabled (0.5 credit for substring matches)\n')
+#         detailed_log.write('='*100 + '\n\n')
         
-        for test_case in test_queries:
-            query = test_case['query']
-            expected_cuis = set(test_case['expected_cuis'])
+#         for test_case in test_queries:
+#             query = test_case['query']
+#             expected_cuis = set(test_case['expected_cuis'])
             
-            # Log query details
-            query_num = test_queries.index(test_case) + 1
-            detailed_log.write(f'\n{"="*100}\n')
-            detailed_log.write(f'QUERY #{query_num}/{len(test_queries)}: "{query}"\n')
-            detailed_log.write(f'{"="*100}\n')
-            detailed_log.write(f'Expected CUIs: {sorted(list(expected_cuis))}\n')
-            detailed_log.write(f'Number of Expected CUIs: {len(expected_cuis)}\n\n')
+#             # Log query details
+#             query_num = test_queries.index(test_case) + 1
+#             detailed_log.write(f'\n{"="*100}\n')
+#             detailed_log.write(f'QUERY #{query_num}/{len(test_queries)}: "{query}"\n')
+#             detailed_log.write(f'{"="*100}\n')
+#             detailed_log.write(f'Expected CUIs: {sorted(list(expected_cuis))}\n')
+#             detailed_log.write(f'Number of Expected CUIs: {len(expected_cuis)}\n\n')
             
-            # Get query embedding
-            detailed_log.write('STEP 1: Query Embedding\n')
-            detailed_log.write('-'*100 + '\n')
-            query_embedding = sentence_model.encode([query], show_progress_bar=False)[0]
-            detailed_log.write(f'Raw embedding shape: {query_embedding.shape}\n')
-            detailed_log.write(f'Raw embedding norm: {np.linalg.norm(query_embedding):.6f}\n')
-            query_embedding = query_embedding / np.linalg.norm(query_embedding)
-            detailed_log.write(f'Normalized embedding norm: {np.linalg.norm(query_embedding):.6f} (should be 1.0)\n\n')
+#             # Get query embedding
+#             detailed_log.write('STEP 1: Query Embedding\n')
+#             detailed_log.write('-'*100 + '\n')
+#             query_embedding = sentence_model.encode([query], show_progress_bar=False)[0]
+#             detailed_log.write(f'Raw embedding shape: {query_embedding.shape}\n')
+#             detailed_log.write(f'Raw embedding norm: {np.linalg.norm(query_embedding):.6f}\n')
+#             query_embedding = query_embedding / np.linalg.norm(query_embedding)
+#             detailed_log.write(f'Normalized embedding norm: {np.linalg.norm(query_embedding):.6f} (should be 1.0)\n\n')
             
-            # Compute cosine similarities
-            detailed_log.write('STEP 2: Similarity Computation\n')
-            detailed_log.write('-'*100 + '\n')
-            similarities = np.dot(entity_embeddings_matrix, query_embedding)
-            detailed_log.write(f'Computed similarities for {len(similarities)} entities\n')
-            detailed_log.write(f'Min similarity: {similarities.min():.6f}\n')
-            detailed_log.write(f'Max similarity: {similarities.max():.6f}\n')
-            detailed_log.write(f'Mean similarity: {similarities.mean():.6f}\n')
-            detailed_log.write(f'Median similarity: {np.median(similarities):.6f}\n\n')
+#             # Compute cosine similarities
+#             detailed_log.write('STEP 2: Similarity Computation\n')
+#             detailed_log.write('-'*100 + '\n')
+#             similarities = np.dot(entity_embeddings_matrix, query_embedding)
+#             detailed_log.write(f'Computed similarities for {len(similarities)} entities\n')
+#             detailed_log.write(f'Min similarity: {similarities.min():.6f}\n')
+#             detailed_log.write(f'Max similarity: {similarities.max():.6f}\n')
+#             detailed_log.write(f'Mean similarity: {similarities.mean():.6f}\n')
+#             detailed_log.write(f'Median similarity: {np.median(similarities):.6f}\n\n')
             
-            # Get top-10 results for comprehensive evaluation
-            detailed_log.write('STEP 3: Top-K Retrieval\n')
-            detailed_log.write('-'*100 + '\n')
-            top_indices = np.argsort(similarities)[::-1][:top_k]
-            detailed_log.write(f'Retrieved top-{top_k} entities by similarity:\n')
-            for rank, idx in enumerate(top_indices, 1):
-                cui = cui_list[idx]
-                name = entity_names_list[idx]
-                sim = similarities[idx]
-                is_expected = '✓ EXPECTED' if cui in expected_cuis else '✗'
-                detailed_log.write(f'  Rank {rank:2d}: {cui:15s} | Sim={sim:.6f} | {name[:50]:50s} | {is_expected}\n')
-            detailed_log.write('\n')
+#             # Get top-10 results for comprehensive evaluation
+#             detailed_log.write('STEP 3: Top-K Retrieval\n')
+#             detailed_log.write('-'*100 + '\n')
+#             top_indices = np.argsort(similarities)[::-1][:top_k]
+#             detailed_log.write(f'Retrieved top-{top_k} entities by similarity:\n')
+#             for rank, idx in enumerate(top_indices, 1):
+#                 cui = cui_list[idx]
+#                 name = entity_names_list[idx]
+#                 sim = similarities[idx]
+#                 is_expected = '✓ EXPECTED' if cui in expected_cuis else '✗'
+#                 detailed_log.write(f'  Rank {rank:2d}: {cui:15s} | Sim={sim:.6f} | {name[:50]:50s} | {is_expected}\n')
+#             detailed_log.write('\n')
             
-            # Apply threshold filter
-            detailed_log.write('STEP 4: Threshold Filtering\n')
-            detailed_log.write('-'*100 + '\n')
-            detailed_log.write(f'Applying similarity threshold: {threshold}\n')
-            retrieved_cuis = []
-            filtered_count = 0
-            for idx in top_indices:
-                if similarities[idx] >= threshold:
-                    retrieved_cuis.append(cui_list[idx])
-                else:
-                    filtered_count += 1
-            detailed_log.write(f'Retrieved CUIs (above threshold): {retrieved_cuis}\n')
-            detailed_log.write(f'Number retrieved: {len(retrieved_cuis)}\n')
-            detailed_log.write(f'Number filtered out: {filtered_count}\n\n')
+#             # Apply threshold filter
+#             detailed_log.write('STEP 4: Threshold Filtering\n')
+#             detailed_log.write('-'*100 + '\n')
+#             detailed_log.write(f'Applying similarity threshold: {threshold}\n')
+#             retrieved_cuis = []
+#             filtered_count = 0
+#             for idx in top_indices:
+#                 if similarities[idx] >= threshold:
+#                     retrieved_cuis.append(cui_list[idx])
+#                 else:
+#                     filtered_count += 1
+#             detailed_log.write(f'Retrieved CUIs (above threshold): {retrieved_cuis}\n')
+#             detailed_log.write(f'Number retrieved: {len(retrieved_cuis)}\n')
+#             detailed_log.write(f'Number filtered out: {filtered_count}\n\n')
             
-            # Calculate metrics with SOFT MATCHING (for related CUIs)
-            detailed_log.write('STEP 5: Exact and Soft Matching\n')
-            detailed_log.write('-'*100 + '\n')
-            exact_matches = set(retrieved_cuis) & expected_cuis
-            detailed_log.write(f'Exact matches: {sorted(list(exact_matches))}\n')
-            detailed_log.write(f'Number of exact matches: {len(exact_matches)}\n\n')
+#             # Calculate metrics with SOFT MATCHING (for related CUIs)
+#             detailed_log.write('STEP 5: Exact and Soft Matching\n')
+#             detailed_log.write('-'*100 + '\n')
+#             exact_matches = set(retrieved_cuis) & expected_cuis
+#             detailed_log.write(f'Exact matches: {sorted(list(exact_matches))}\n')
+#             detailed_log.write(f'Number of exact matches: {len(exact_matches)}\n\n')
             
-            # Soft matching: partial credit for substring matches
-            detailed_log.write('Soft matching analysis (0.5 credit for substring matches):\n')
-            soft_matches = 0
-            for ret_cui in retrieved_cuis:
-                if ret_cui not in exact_matches:
-                    for exp_cui in expected_cuis:
-                        if ret_cui in exp_cui or exp_cui in ret_cui:
-                            detailed_log.write(f'  Soft match: {ret_cui} ↔ {exp_cui} (substring match)\n')
-                            soft_matches += 1
-                            break
-            detailed_log.write(f'Number of soft matches: {soft_matches}\n')
-            detailed_log.write(f'Soft match contribution: {soft_matches} × 0.5 = {soft_matches * 0.5}\n\n')
+#             # Soft matching: partial credit for substring matches
+#             detailed_log.write('Soft matching analysis (0.5 credit for substring matches):\n')
+#             soft_matches = 0
+#             for ret_cui in retrieved_cuis:
+#                 if ret_cui not in exact_matches:
+#                     for exp_cui in expected_cuis:
+#                         if ret_cui in exp_cui or exp_cui in ret_cui:
+#                             detailed_log.write(f'  Soft match: {ret_cui} ↔ {exp_cui} (substring match)\n')
+#                             soft_matches += 1
+#                             break
+#             detailed_log.write(f'Number of soft matches: {soft_matches}\n')
+#             detailed_log.write(f'Soft match contribution: {soft_matches} × 0.5 = {soft_matches * 0.5}\n\n')
             
-            # Calculate TP, FP, FN with partial credit for soft matches
-            detailed_log.write('STEP 6: True Positives, False Positives, False Negatives\n')
-            detailed_log.write('-'*100 + '\n')
-            tp = len(exact_matches) + (soft_matches * 0.5)
-            fp = len(retrieved_cuis) - len(exact_matches) - soft_matches
-            fn = len(expected_cuis) - len(exact_matches) - (soft_matches * 0.5)
+#             # Calculate TP, FP, FN with partial credit for soft matches
+#             detailed_log.write('STEP 6: True Positives, False Positives, False Negatives\n')
+#             detailed_log.write('-'*100 + '\n')
+#             tp = len(exact_matches) + (soft_matches * 0.5)
+#             fp = len(retrieved_cuis) - len(exact_matches) - soft_matches
+#             fn = len(expected_cuis) - len(exact_matches) - (soft_matches * 0.5)
             
-            detailed_log.write(f'TP (True Positives) = exact_matches + (soft_matches × 0.5)\n')
-            detailed_log.write(f'                    = {len(exact_matches)} + ({soft_matches} × 0.5)\n')
-            detailed_log.write(f'                    = {len(exact_matches)} + {soft_matches * 0.5}\n')
-            detailed_log.write(f'                    = {tp}\n\n')
+#             detailed_log.write(f'TP (True Positives) = exact_matches + (soft_matches × 0.5)\n')
+#             detailed_log.write(f'                    = {len(exact_matches)} + ({soft_matches} × 0.5)\n')
+#             detailed_log.write(f'                    = {len(exact_matches)} + {soft_matches * 0.5}\n')
+#             detailed_log.write(f'                    = {tp}\n\n')
             
-            detailed_log.write(f'FP (False Positives) = retrieved - exact_matches - soft_matches\n')
-            detailed_log.write(f'                     = {len(retrieved_cuis)} - {len(exact_matches)} - {soft_matches}\n')
-            detailed_log.write(f'                     = {fp}\n\n')
+#             detailed_log.write(f'FP (False Positives) = retrieved - exact_matches - soft_matches\n')
+#             detailed_log.write(f'                     = {len(retrieved_cuis)} - {len(exact_matches)} - {soft_matches}\n')
+#             detailed_log.write(f'                     = {fp}\n\n')
             
-            detailed_log.write(f'FN (False Negatives) = expected - exact_matches - (soft_matches × 0.5)\n')
-            detailed_log.write(f'                     = {len(expected_cuis)} - {len(exact_matches)} - ({soft_matches} × 0.5)\n')
-            detailed_log.write(f'                     = {len(expected_cuis)} - {len(exact_matches)} - {soft_matches * 0.5}\n')
-            detailed_log.write(f'                     = {fn}\n\n')
+#             detailed_log.write(f'FN (False Negatives) = expected - exact_matches - (soft_matches × 0.5)\n')
+#             detailed_log.write(f'                     = {len(expected_cuis)} - {len(exact_matches)} - ({soft_matches} × 0.5)\n')
+#             detailed_log.write(f'                     = {len(expected_cuis)} - {len(exact_matches)} - {soft_matches * 0.5}\n')
+#             detailed_log.write(f'                     = {fn}\n\n')
             
-            total_tp += tp
-            total_fp += fp
-            total_fn += fn
+#             total_tp += tp
+#             total_fp += fp
+#             total_fn += fn
             
-            # Precision@K, Recall@K, F1@K for different K values
-            detailed_log.write('STEP 7: Precision@K, Recall@K, F1@K Calculations\n')
-            detailed_log.write('-'*100 + '\n')
-            for k in [1, 3, 5, 10]:
-                detailed_log.write(f'\nFor K={k}:\n')
-                k_retrieved = set(retrieved_cuis[:k])
-                k_exact = k_retrieved & expected_cuis
+#             # Precision@K, Recall@K, F1@K for different K values
+#             detailed_log.write('STEP 7: Precision@K, Recall@K, F1@K Calculations\n')
+#             detailed_log.write('-'*100 + '\n')
+#             for k in [1, 3, 5, 10]:
+#                 detailed_log.write(f'\nFor K={k}:\n')
+#                 k_retrieved = set(retrieved_cuis[:k])
+#                 k_exact = k_retrieved & expected_cuis
                 
-                detailed_log.write(f'  Retrieved (top-{k}): {sorted(list(k_retrieved)) if k_retrieved else "[]"}\n')
-                detailed_log.write(f'  Exact matches in top-{k}: {sorted(list(k_exact)) if k_exact else "[]"}\n')
+#                 detailed_log.write(f'  Retrieved (top-{k}): {sorted(list(k_retrieved)) if k_retrieved else "[]"}\n')
+#                 detailed_log.write(f'  Exact matches in top-{k}: {sorted(list(k_exact)) if k_exact else "[]"}\n')
                 
-                # Soft matching for K results
-                k_soft = 0
-                for ret_cui in k_retrieved:
-                    if ret_cui not in k_exact:
-                        for exp_cui in expected_cuis:
-                            if ret_cui in exp_cui or exp_cui in ret_cui:
-                                detailed_log.write(f'  Soft match in top-{k}: {ret_cui} ↔ {exp_cui}\n')
-                                k_soft += 1
-                                break
+#                 # Soft matching for K results
+#                 k_soft = 0
+#                 for ret_cui in k_retrieved:
+#                     if ret_cui not in k_exact:
+#                         for exp_cui in expected_cuis:
+#                             if ret_cui in exp_cui or exp_cui in ret_cui:
+#                                 detailed_log.write(f'  Soft match in top-{k}: {ret_cui} ↔ {exp_cui}\n')
+#                                 k_soft += 1
+#                                 break
                 
-                k_tp = len(k_exact) + (k_soft * 0.5)
-                k_precision = k_tp / len(k_retrieved) if k_retrieved else 0
-                k_recall = k_tp / len(expected_cuis) if expected_cuis else 0
-                k_f1 = 2 * k_precision * k_recall / (k_precision + k_recall) if (k_precision + k_recall) > 0 else 0
+#                 k_tp = len(k_exact) + (k_soft * 0.5)
+#                 k_precision = k_tp / len(k_retrieved) if k_retrieved else 0
+#                 k_recall = k_tp / len(expected_cuis) if expected_cuis else 0
+#                 k_f1 = 2 * k_precision * k_recall / (k_precision + k_recall) if (k_precision + k_recall) > 0 else 0
                 
-                detailed_log.write(f'  K_TP = {len(k_exact)} + ({k_soft} × 0.5) = {k_tp}\n')
-                detailed_log.write(f'  Precision@{k} = K_TP / |retrieved@{k}|\n')
-                detailed_log.write(f'               = {k_tp} / {len(k_retrieved)}\n')
-                detailed_log.write(f'               = {k_precision:.6f}\n')
-                detailed_log.write(f'  Recall@{k} = K_TP / |expected|\n')
-                detailed_log.write(f'            = {k_tp} / {len(expected_cuis)}\n')
-                detailed_log.write(f'            = {k_recall:.6f}\n')
-                detailed_log.write(f'  F1@{k} = 2 × Precision@{k} × Recall@{k} / (Precision@{k} + Recall@{k})\n')
-                detailed_log.write(f'        = 2 × {k_precision:.6f} × {k_recall:.6f} / ({k_precision:.6f} + {k_recall:.6f})\n')
-                if (k_precision + k_recall) > 0:
-                    detailed_log.write(f'        = {2 * k_precision * k_recall:.6f} / {k_precision + k_recall:.6f}\n')
-                detailed_log.write(f'        = {k_f1:.6f}\n')
+#                 detailed_log.write(f'  K_TP = {len(k_exact)} + ({k_soft} × 0.5) = {k_tp}\n')
+#                 detailed_log.write(f'  Precision@{k} = K_TP / |retrieved@{k}|\n')
+#                 detailed_log.write(f'               = {k_tp} / {len(k_retrieved)}\n')
+#                 detailed_log.write(f'               = {k_precision:.6f}\n')
+#                 detailed_log.write(f'  Recall@{k} = K_TP / |expected|\n')
+#                 detailed_log.write(f'            = {k_tp} / {len(expected_cuis)}\n')
+#                 detailed_log.write(f'            = {k_recall:.6f}\n')
+#                 detailed_log.write(f'  F1@{k} = 2 × Precision@{k} × Recall@{k} / (Precision@{k} + Recall@{k})\n')
+#                 detailed_log.write(f'        = 2 × {k_precision:.6f} × {k_recall:.6f} / ({k_precision:.6f} + {k_recall:.6f})\n')
+#                 if (k_precision + k_recall) > 0:
+#                     detailed_log.write(f'        = {2 * k_precision * k_recall:.6f} / {k_precision + k_recall:.6f}\n')
+#                 detailed_log.write(f'        = {k_f1:.6f}\n')
                 
-                total_precision_at_k[k] += k_precision
-                total_recall_at_k[k] += k_recall
-                total_f1_at_k[k] += k_f1
+#                 total_precision_at_k[k] += k_precision
+#                 total_recall_at_k[k] += k_recall
+#                 total_f1_at_k[k] += k_f1
             
-            # MRR: Mean Reciprocal Rank (position of first relevant result)
-            detailed_log.write('\nSTEP 8: Mean Reciprocal Rank (MRR) Calculation\n')
-            detailed_log.write('-'*100 + '\n')
-            first_relevant_rank = None
-            for rank, cui in enumerate(retrieved_cuis, 1):
-                is_exact = cui in expected_cuis
-                is_soft = any(cui in exp or exp in cui for exp in expected_cuis) if not is_exact else False
-                if is_exact or is_soft:
-                    first_relevant_rank = rank
-                    match_type = "exact" if is_exact else "soft"
-                    detailed_log.write(f'First relevant result found at rank {rank} ({match_type} match): {cui}\n')
-                    break
+#             # MRR: Mean Reciprocal Rank (position of first relevant result)
+#             detailed_log.write('\nSTEP 8: Mean Reciprocal Rank (MRR) Calculation\n')
+#             detailed_log.write('-'*100 + '\n')
+#             first_relevant_rank = None
+#             for rank, cui in enumerate(retrieved_cuis, 1):
+#                 is_exact = cui in expected_cuis
+#                 is_soft = any(cui in exp or exp in cui for exp in expected_cuis) if not is_exact else False
+#                 if is_exact or is_soft:
+#                     first_relevant_rank = rank
+#                     match_type = "exact" if is_exact else "soft"
+#                     detailed_log.write(f'First relevant result found at rank {rank} ({match_type} match): {cui}\n')
+#                     break
             
-            if first_relevant_rank:
-                rr = 1.0 / first_relevant_rank
-                detailed_log.write(f'Reciprocal Rank = 1 / {first_relevant_rank} = {rr:.6f}\n')
-                reciprocal_ranks.append(rr)
-            else:
-                detailed_log.write('No relevant result found in retrieved set\n')
-                detailed_log.write('Reciprocal Rank = 0.0\n')
-                reciprocal_ranks.append(0.0)
+#             if first_relevant_rank:
+#                 rr = 1.0 / first_relevant_rank
+#                 detailed_log.write(f'Reciprocal Rank = 1 / {first_relevant_rank} = {rr:.6f}\n')
+#                 reciprocal_ranks.append(rr)
+#             else:
+#                 detailed_log.write('No relevant result found in retrieved set\n')
+#                 detailed_log.write('Reciprocal Rank = 0.0\n')
+#                 reciprocal_ranks.append(0.0)
             
-            # MAP: Mean Average Precision (precision at each relevant result)
-            detailed_log.write('\nSTEP 9: Average Precision (AP) Calculation for MAP\n')
-            detailed_log.write('-'*100 + '\n')
-            relevant_found = 0
-            precision_sum = 0
-            detailed_log.write('Computing precision at each relevant result position:\n')
-            for rank, cui in enumerate(retrieved_cuis, 1):
-                is_exact = cui in expected_cuis
-                is_soft = any(cui in exp or exp in cui for exp in expected_cuis) if not is_exact else False
-                if is_exact or is_soft:
-                    relevant_found += 1
-                    precision_at_rank = relevant_found / rank
-                    precision_sum += precision_at_rank
-                    match_type = "exact" if is_exact else "soft"
-                    detailed_log.write(f'  Rank {rank}: {cui} ({match_type}) → Precision = {relevant_found}/{rank} = {precision_at_rank:.6f}\n')
+#             # MAP: Mean Average Precision (precision at each relevant result)
+#             detailed_log.write('\nSTEP 9: Average Precision (AP) Calculation for MAP\n')
+#             detailed_log.write('-'*100 + '\n')
+#             relevant_found = 0
+#             precision_sum = 0
+#             detailed_log.write('Computing precision at each relevant result position:\n')
+#             for rank, cui in enumerate(retrieved_cuis, 1):
+#                 is_exact = cui in expected_cuis
+#                 is_soft = any(cui in exp or exp in cui for exp in expected_cuis) if not is_exact else False
+#                 if is_exact or is_soft:
+#                     relevant_found += 1
+#                     precision_at_rank = relevant_found / rank
+#                     precision_sum += precision_at_rank
+#                     match_type = "exact" if is_exact else "soft"
+#                     detailed_log.write(f'  Rank {rank}: {cui} ({match_type}) → Precision = {relevant_found}/{rank} = {precision_at_rank:.6f}\n')
             
-            detailed_log.write(f'\nPrecision sum = {precision_sum:.6f}\n')
-            detailed_log.write(f'Number of expected CUIs = {len(expected_cuis)}\n')
-            avg_precision = precision_sum / len(expected_cuis) if expected_cuis else 0
-            detailed_log.write(f'Average Precision = {precision_sum:.6f} / {len(expected_cuis)} = {avg_precision:.6f}\n')
-            average_precisions.append(avg_precision)
+#             detailed_log.write(f'\nPrecision sum = {precision_sum:.6f}\n')
+#             detailed_log.write(f'Number of expected CUIs = {len(expected_cuis)}\n')
+#             avg_precision = precision_sum / len(expected_cuis) if expected_cuis else 0
+#             detailed_log.write(f'Average Precision = {precision_sum:.6f} / {len(expected_cuis)} = {avg_precision:.6f}\n')
+#             average_precisions.append(avg_precision)
             
-            # Query summary
-            detailed_log.write('\n' + '='*100 + '\n')
-            detailed_log.write(f'QUERY #{query_num} SUMMARY:\n')
-            detailed_log.write('='*100 + '\n')
-            detailed_log.write(f'TP={tp:.1f}, FP={fp:.1f}, FN={fn:.1f}\n')
-            detailed_log.write(f'Reciprocal Rank: {reciprocal_ranks[-1]:.6f}\n')
-            detailed_log.write(f'Average Precision: {avg_precision:.6f}\n')
-            detailed_log.write('='*100 + '\n\n')
+#             # Query summary
+#             detailed_log.write('\n' + '='*100 + '\n')
+#             detailed_log.write(f'QUERY #{query_num} SUMMARY:\n')
+#             detailed_log.write('='*100 + '\n')
+#             detailed_log.write(f'TP={tp:.1f}, FP={fp:.1f}, FN={fn:.1f}\n')
+#             detailed_log.write(f'Reciprocal Rank: {reciprocal_ranks[-1]:.6f}\n')
+#             detailed_log.write(f'Average Precision: {avg_precision:.6f}\n')
+#             detailed_log.write('='*100 + '\n\n')
 
         
-        # Calculate overall metrics
-        n_queries = len(test_queries)
+#         # Calculate overall metrics
+#         n_queries = len(test_queries)
         
-        # Write overall calculations to detailed log
-        detailed_log.write('\n' + '='*100 + '\n')
-        detailed_log.write('OVERALL METRICS CALCULATION\n')
-        detailed_log.write('='*100 + '\n\n')
+#         # Write overall calculations to detailed log
+#         detailed_log.write('\n' + '='*100 + '\n')
+#         detailed_log.write('OVERALL METRICS CALCULATION\n')
+#         detailed_log.write('='*100 + '\n\n')
         
-        detailed_log.write('STEP 1: Overall Precision, Recall, F1\n')
-        detailed_log.write('-'*100 + '\n')
-        detailed_log.write(f'Total True Positives (across all queries): {total_tp:.2f}\n')
-        detailed_log.write(f'Total False Positives (across all queries): {total_fp:.2f}\n')
-        detailed_log.write(f'Total False Negatives (across all queries): {total_fn:.2f}\n\n')
+#         detailed_log.write('STEP 1: Overall Precision, Recall, F1\n')
+#         detailed_log.write('-'*100 + '\n')
+#         detailed_log.write(f'Total True Positives (across all queries): {total_tp:.2f}\n')
+#         detailed_log.write(f'Total False Positives (across all queries): {total_fp:.2f}\n')
+#         detailed_log.write(f'Total False Negatives (across all queries): {total_fn:.2f}\n\n')
         
-        overall_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
-        overall_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
-        overall_f1 = 2 * overall_precision * overall_recall / (overall_precision + overall_recall) if (overall_precision + overall_recall) > 0 else 0
+#         overall_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+#         overall_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+#         overall_f1 = 2 * overall_precision * overall_recall / (overall_precision + overall_recall) if (overall_precision + overall_recall) > 0 else 0
         
-        detailed_log.write(f'Overall Precision = TP / (TP + FP)\n')
-        detailed_log.write(f'                  = {total_tp:.2f} / ({total_tp:.2f} + {total_fp:.2f})\n')
-        detailed_log.write(f'                  = {total_tp:.2f} / {total_tp + total_fp:.2f}\n')
-        detailed_log.write(f'                  = {overall_precision:.6f} ({overall_precision*100:.2f}%)\n\n')
+#         detailed_log.write(f'Overall Precision = TP / (TP + FP)\n')
+#         detailed_log.write(f'                  = {total_tp:.2f} / ({total_tp:.2f} + {total_fp:.2f})\n')
+#         detailed_log.write(f'                  = {total_tp:.2f} / {total_tp + total_fp:.2f}\n')
+#         detailed_log.write(f'                  = {overall_precision:.6f} ({overall_precision*100:.2f}%)\n\n')
         
-        detailed_log.write(f'Overall Recall = TP / (TP + FN)\n')
-        detailed_log.write(f'               = {total_tp:.2f} / ({total_tp:.2f} + {total_fn:.2f})\n')
-        detailed_log.write(f'               = {total_tp:.2f} / {total_tp + total_fn:.2f}\n')
-        detailed_log.write(f'               = {overall_recall:.6f} ({overall_recall*100:.2f}%)\n\n')
+#         detailed_log.write(f'Overall Recall = TP / (TP + FN)\n')
+#         detailed_log.write(f'               = {total_tp:.2f} / ({total_tp:.2f} + {total_fn:.2f})\n')
+#         detailed_log.write(f'               = {total_tp:.2f} / {total_tp + total_fn:.2f}\n')
+#         detailed_log.write(f'               = {overall_recall:.6f} ({overall_recall*100:.2f}%)\n\n')
         
-        detailed_log.write(f'Overall F1 Score = 2 × Precision × Recall / (Precision + Recall)\n')
-        detailed_log.write(f'                 = 2 × {overall_precision:.6f} × {overall_recall:.6f} / ({overall_precision:.6f} + {overall_recall:.6f})\n')
-        if (overall_precision + overall_recall) > 0:
-            detailed_log.write(f'                 = {2 * overall_precision * overall_recall:.6f} / {overall_precision + overall_recall:.6f}\n')
-        detailed_log.write(f'                 = {overall_f1:.6f} ({overall_f1*100:.2f}%)\n\n')
+#         detailed_log.write(f'Overall F1 Score = 2 × Precision × Recall / (Precision + Recall)\n')
+#         detailed_log.write(f'                 = 2 × {overall_precision:.6f} × {overall_recall:.6f} / ({overall_precision:.6f} + {overall_recall:.6f})\n')
+#         if (overall_precision + overall_recall) > 0:
+#             detailed_log.write(f'                 = {2 * overall_precision * overall_recall:.6f} / {overall_precision + overall_recall:.6f}\n')
+#         detailed_log.write(f'                 = {overall_f1:.6f} ({overall_f1*100:.2f}%)\n\n')
         
-        detailed_log.write('STEP 2: Mean Reciprocal Rank (MRR)\n')
-        detailed_log.write('-'*100 + '\n')
-        detailed_log.write(f'Reciprocal ranks for all queries: {[f"{rr:.4f}" for rr in reciprocal_ranks]}\n')
-        detailed_log.write(f'Sum of reciprocal ranks: {sum(reciprocal_ranks):.6f}\n')
-        detailed_log.write(f'Number of queries: {len(reciprocal_ranks)}\n')
-        mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0
-        detailed_log.write(f'MRR = Sum(RR) / Number of queries\n')
-        detailed_log.write(f'    = {sum(reciprocal_ranks):.6f} / {len(reciprocal_ranks)}\n')
-        detailed_log.write(f'    = {mrr:.6f}\n\n')
+#         detailed_log.write('STEP 2: Mean Reciprocal Rank (MRR)\n')
+#         detailed_log.write('-'*100 + '\n')
+#         detailed_log.write(f'Reciprocal ranks for all queries: {[f"{rr:.4f}" for rr in reciprocal_ranks]}\n')
+#         detailed_log.write(f'Sum of reciprocal ranks: {sum(reciprocal_ranks):.6f}\n')
+#         detailed_log.write(f'Number of queries: {len(reciprocal_ranks)}\n')
+#         mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0
+#         detailed_log.write(f'MRR = Sum(RR) / Number of queries\n')
+#         detailed_log.write(f'    = {sum(reciprocal_ranks):.6f} / {len(reciprocal_ranks)}\n')
+#         detailed_log.write(f'    = {mrr:.6f}\n\n')
         
-        detailed_log.write('STEP 3: Mean Average Precision (MAP)\n')
-        detailed_log.write('-'*100 + '\n')
-        detailed_log.write(f'Average precisions for all queries: {[f"{ap:.4f}" for ap in average_precisions]}\n')
-        detailed_log.write(f'Sum of average precisions: {sum(average_precisions):.6f}\n')
-        detailed_log.write(f'Number of queries: {len(average_precisions)}\n')
-        map_score = sum(average_precisions) / len(average_precisions) if average_precisions else 0
-        detailed_log.write(f'MAP = Sum(AP) / Number of queries\n')
-        detailed_log.write(f'    = {sum(average_precisions):.6f} / {len(average_precisions)}\n')
-        detailed_log.write(f'    = {map_score:.6f}\n\n')
+#         detailed_log.write('STEP 3: Mean Average Precision (MAP)\n')
+#         detailed_log.write('-'*100 + '\n')
+#         detailed_log.write(f'Average precisions for all queries: {[f"{ap:.4f}" for ap in average_precisions]}\n')
+#         detailed_log.write(f'Sum of average precisions: {sum(average_precisions):.6f}\n')
+#         detailed_log.write(f'Number of queries: {len(average_precisions)}\n')
+#         map_score = sum(average_precisions) / len(average_precisions) if average_precisions else 0
+#         detailed_log.write(f'MAP = Sum(AP) / Number of queries\n')
+#         detailed_log.write(f'    = {sum(average_precisions):.6f} / {len(average_precisions)}\n')
+#         detailed_log.write(f'    = {map_score:.6f}\n\n')
         
-        detailed_log.write('STEP 4: Precision@K, Recall@K, F1@K (Averaged across queries)\n')
-        detailed_log.write('-'*100 + '\n')
-        for k in [1, 3, 5, 10]:
-            p_at_k = total_precision_at_k[k] / n_queries
-            r_at_k = total_recall_at_k[k] / n_queries
-            f1_at_k = total_f1_at_k[k] / n_queries
+#         detailed_log.write('STEP 4: Precision@K, Recall@K, F1@K (Averaged across queries)\n')
+#         detailed_log.write('-'*100 + '\n')
+#         for k in [1, 3, 5, 10]:
+#             p_at_k = total_precision_at_k[k] / n_queries
+#             r_at_k = total_recall_at_k[k] / n_queries
+#             f1_at_k = total_f1_at_k[k] / n_queries
             
-            detailed_log.write(f'\nFor K={k}:\n')
-            detailed_log.write(f'  Sum of Precision@{k} across all queries: {total_precision_at_k[k]:.6f}\n')
-            detailed_log.write(f'  Average Precision@{k} = {total_precision_at_k[k]:.6f} / {n_queries} = {p_at_k:.6f} ({p_at_k*100:.2f}%)\n')
-            detailed_log.write(f'  Sum of Recall@{k} across all queries: {total_recall_at_k[k]:.6f}\n')
-            detailed_log.write(f'  Average Recall@{k} = {total_recall_at_k[k]:.6f} / {n_queries} = {r_at_k:.6f} ({r_at_k*100:.2f}%)\n')
-            detailed_log.write(f'  Sum of F1@{k} across all queries: {total_f1_at_k[k]:.6f}\n')
-            detailed_log.write(f'  Average F1@{k} = {total_f1_at_k[k]:.6f} / {n_queries} = {f1_at_k:.6f} ({f1_at_k*100:.2f}%)\n')
+#             detailed_log.write(f'\nFor K={k}:\n')
+#             detailed_log.write(f'  Sum of Precision@{k} across all queries: {total_precision_at_k[k]:.6f}\n')
+#             detailed_log.write(f'  Average Precision@{k} = {total_precision_at_k[k]:.6f} / {n_queries} = {p_at_k:.6f} ({p_at_k*100:.2f}%)\n')
+#             detailed_log.write(f'  Sum of Recall@{k} across all queries: {total_recall_at_k[k]:.6f}\n')
+#             detailed_log.write(f'  Average Recall@{k} = {total_recall_at_k[k]:.6f} / {n_queries} = {r_at_k:.6f} ({r_at_k*100:.2f}%)\n')
+#             detailed_log.write(f'  Sum of F1@{k} across all queries: {total_f1_at_k[k]:.6f}\n')
+#             detailed_log.write(f'  Average F1@{k} = {total_f1_at_k[k]:.6f} / {n_queries} = {f1_at_k:.6f} ({f1_at_k*100:.2f}%)\n')
         
-        detailed_log.write('\n' + '='*100 + '\n')
-        detailed_log.write('FINAL SUMMARY OF ALL METRICS\n')
-        detailed_log.write('='*100 + '\n')
-        detailed_log.write(f'Overall Precision:  {overall_precision:.6f} ({overall_precision*100:.2f}%)\n')
-        detailed_log.write(f'Overall Recall:     {overall_recall:.6f} ({overall_recall*100:.2f}%)\n')
-        detailed_log.write(f'Overall F1 Score:   {overall_f1:.6f} ({overall_f1*100:.2f}%)\n')
-        detailed_log.write(f'MRR:                {mrr:.6f}\n')
-        detailed_log.write(f'MAP:                {map_score:.6f}\n\n')
+#         detailed_log.write('\n' + '='*100 + '\n')
+#         detailed_log.write('FINAL SUMMARY OF ALL METRICS\n')
+#         detailed_log.write('='*100 + '\n')
+#         detailed_log.write(f'Overall Precision:  {overall_precision:.6f} ({overall_precision*100:.2f}%)\n')
+#         detailed_log.write(f'Overall Recall:     {overall_recall:.6f} ({overall_recall*100:.2f}%)\n')
+#         detailed_log.write(f'Overall F1 Score:   {overall_f1:.6f} ({overall_f1*100:.2f}%)\n')
+#         detailed_log.write(f'MRR:                {mrr:.6f}\n')
+#         detailed_log.write(f'MAP:                {map_score:.6f}\n\n')
         
-        for k in [1, 3, 5, 10]:
-            p_at_k = total_precision_at_k[k] / n_queries
-            r_at_k = total_recall_at_k[k] / n_queries
-            f1_at_k = total_f1_at_k[k] / n_queries
-            detailed_log.write(f'P@{k:2d}:  {p_at_k:.6f} ({p_at_k*100:.2f}%)\n')
-            detailed_log.write(f'R@{k:2d}:  {r_at_k:.6f} ({r_at_k*100:.2f}%)\n')
-            detailed_log.write(f'F1@{k:2d}: {f1_at_k:.6f} ({f1_at_k*100:.2f}%)\n\n')
+#         for k in [1, 3, 5, 10]:
+#             p_at_k = total_precision_at_k[k] / n_queries
+#             r_at_k = total_recall_at_k[k] / n_queries
+#             f1_at_k = total_f1_at_k[k] / n_queries
+#             detailed_log.write(f'P@{k:2d}:  {p_at_k:.6f} ({p_at_k*100:.2f}%)\n')
+#             detailed_log.write(f'R@{k:2d}:  {r_at_k:.6f} ({r_at_k*100:.2f}%)\n')
+#             detailed_log.write(f'F1@{k:2d}: {f1_at_k:.6f} ({f1_at_k*100:.2f}%)\n\n')
         
-        detailed_log.write('='*100 + '\n')
-        detailed_log.write('END OF DETAILED CALCULATION LOG\n')
-        detailed_log.write('='*100 + '\n')
+#         detailed_log.write('='*100 + '\n')
+#         detailed_log.write('END OF DETAILED CALCULATION LOG\n')
+#         detailed_log.write('='*100 + '\n')
         
-        # Close detailed log
-        detailed_log.close()
+#         # Close detailed log
+#         detailed_log.close()
         
-        # Write to summary log file
-        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, 'retrieval_metrics.log')
+#         # Write to summary log file
+#         log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+#         os.makedirs(log_dir, exist_ok=True)
+#         log_file = os.path.join(log_dir, 'retrieval_metrics.log')
         
-        with open(log_file, 'w', encoding='utf-8') as f:  # Overwrite to keep latest only
-            f.write('='*70 + '\n')
-            f.write('INFORMATION RETRIEVAL METRICS - ADAPTIVE_PRECISION Strategy\n')
-            f.write('='*70 + '\n')
-            f.write(f'Evaluation Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
-            f.write(f'Dataset: test_queries.csv ({n_queries} queries)\n')
-            f.write(f'Entity Pool: neo4j_node.csv ({len(entity_names_list)} entities)\n')
-            f.write(f'Model: sentence-transformers/all-MiniLM-L6-v2\n\n')
+#         with open(log_file, 'w', encoding='utf-8') as f:  # Overwrite to keep latest only
+#             f.write('='*70 + '\n')
+#             f.write('INFORMATION RETRIEVAL METRICS - ADAPTIVE_PRECISION Strategy\n')
+#             f.write('='*70 + '\n')
+#             f.write(f'Evaluation Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
+#             f.write(f'Dataset: test_queries.csv ({n_queries} queries)\n')
+#             f.write(f'Entity Pool: neo4j_node.csv ({len(entity_names_list)} entities)\n')
+#             f.write(f'Model: sentence-transformers/all-MiniLM-L6-v2\n\n')
             
-            f.write('OVERALL RETRIEVAL PERFORMANCE:\n')
-            f.write(f'  Precision:         {overall_precision:.4f} ({overall_precision*100:.2f}%)\n')
-            f.write(f'  Recall:            {overall_recall:.4f} ({overall_recall*100:.2f}%)\n')
-            f.write(f'  F1 Score:          {overall_f1:.4f} ({overall_f1*100:.2f}%)\n')
-            f.write(f'  MRR (Mean Reciprocal Rank):  {mrr:.4f}\n')
-            f.write(f'  MAP (Mean Average Precision): {map_score:.4f}\n\n')
+#             f.write('OVERALL RETRIEVAL PERFORMANCE:\n')
+#             f.write(f'  Precision:         {overall_precision:.4f} ({overall_precision*100:.2f}%)\n')
+#             f.write(f'  Recall:            {overall_recall:.4f} ({overall_recall*100:.2f}%)\n')
+#             f.write(f'  F1 Score:          {overall_f1:.4f} ({overall_f1*100:.2f}%)\n')
+#             f.write(f'  MRR (Mean Reciprocal Rank):  {mrr:.4f}\n')
+#             f.write(f'  MAP (Mean Average Precision): {map_score:.4f}\n\n')
             
-            f.write('PRECISION @ K:\n')
-            for k in [1, 3, 5, 10]:
-                p_at_k = total_precision_at_k[k] / n_queries
-                f.write(f'  P@{k:2d}:  {p_at_k:.4f} ({p_at_k*100:.2f}%)\n')
+#             f.write('PRECISION @ K:\n')
+#             for k in [1, 3, 5, 10]:
+#                 p_at_k = total_precision_at_k[k] / n_queries
+#                 f.write(f'  P@{k:2d}:  {p_at_k:.4f} ({p_at_k*100:.2f}%)\n')
             
-            f.write('\nRECALL @ K:\n')
-            for k in [1, 3, 5, 10]:
-                r_at_k = total_recall_at_k[k] / n_queries
-                f.write(f'  R@{k:2d}:  {r_at_k:.4f} ({r_at_k*100:.2f}%)\n')
+#             f.write('\nRECALL @ K:\n')
+#             for k in [1, 3, 5, 10]:
+#                 r_at_k = total_recall_at_k[k] / n_queries
+#                 f.write(f'  R@{k:2d}:  {r_at_k:.4f} ({r_at_k*100:.2f}%)\n')
             
-            f.write('\nF1 @ K:\n')
-            for k in [1, 3, 5, 10]:
-                f1_at_k = total_f1_at_k[k] / n_queries
-                f.write(f'  F1@{k:2d}: {f1_at_k:.4f} ({f1_at_k*100:.2f}%)\n')
+#             f.write('\nF1 @ K:\n')
+#             for k in [1, 3, 5, 10]:
+#                 f1_at_k = total_f1_at_k[k] / n_queries
+#                 f.write(f'  F1@{k:2d}: {f1_at_k:.4f} ({f1_at_k*100:.2f}%)\n')
             
-            f.write('\nRETRIEVAL STRATEGY:\n')
-            f.write(f'  Strategy: ADAPTIVE_PRECISION\n')
-            f.write(f'  Similarity Threshold: {threshold}\n')
-            f.write(f'  Top-K Results: {top_k}\n')
-            f.write(f'  Soft Matching: Enabled (0.5 credit for substring matches)\n')
+#             f.write('\nRETRIEVAL STRATEGY:\n')
+#             f.write(f'  Strategy: ADAPTIVE_PRECISION\n')
+#             f.write(f'  Similarity Threshold: {threshold}\n')
+#             f.write(f'  Top-K Results: {top_k}\n')
+#             f.write(f'  Soft Matching: Enabled (0.5 credit for substring matches)\n')
             
-            f.write('\nMETRIC DEFINITIONS:\n')
-            f.write('  • Precision: Fraction of retrieved entities that are relevant\n')
-            f.write('  • Recall: Fraction of relevant entities that are retrieved\n')
-            f.write('  • F1 Score: Harmonic mean of precision and recall\n')
-            f.write('  • MRR: Average of reciprocal ranks of first relevant result\n')
-            f.write('  • MAP: Mean of average precision across all queries\n')
-            f.write('  • P@K: Precision considering only top-K results\n')
-            f.write('  • R@K: Recall considering only top-K results\n')
-            f.write('='*70 + '\n')
+#             f.write('\nMETRIC DEFINITIONS:\n')
+#             f.write('  • Precision: Fraction of retrieved entities that are relevant\n')
+#             f.write('  • Recall: Fraction of relevant entities that are retrieved\n')
+#             f.write('  • F1 Score: Harmonic mean of precision and recall\n')
+#             f.write('  • MRR: Average of reciprocal ranks of first relevant result\n')
+#             f.write('  • MAP: Mean of average precision across all queries\n')
+#             f.write('  • P@K: Precision considering only top-K results\n')
+#             f.write('  • R@K: Recall considering only top-K results\n')
+#             f.write('='*70 + '\n')
         
-        print(f"✓ Retrieval metrics logged to: {log_file}")
-        print(f"✓ Detailed calculations logged to: {detailed_log_file}")
-        print(f"  F1 Score: {overall_f1:.4f} ({overall_f1*100:.2f}%)")
-        print(f"  Precision: {overall_precision:.4f} ({overall_precision*100:.2f}%)")
-        print(f"  Recall: {overall_recall:.4f} ({overall_recall*100:.2f}%)")
-        print(f"  MRR: {mrr:.4f}, MAP: {map_score:.4f}")
+#         print(f"✓ Retrieval metrics logged to: {log_file}")
+#         print(f"✓ Detailed calculations logged to: {detailed_log_file}")
+#         print(f"  F1 Score: {overall_f1:.4f} ({overall_f1*100:.2f}%)")
+#         print(f"  Precision: {overall_precision:.4f} ({overall_precision*100:.2f}%)")
+#         print(f"  Recall: {overall_recall:.4f} ({overall_recall*100:.2f}%)")
+#         print(f"  MRR: {mrr:.4f}, MAP: {map_score:.4f}")
         
-    except Exception as e:
-        print(f"Error evaluating retrieval metrics: {e}")
-        import traceback
-        traceback.print_exc()
-        import traceback
-        traceback.print_exc()
+#     except Exception as e:
+#         print(f"Error evaluating retrieval metrics: {e}")
+#         import traceback
+#         traceback.print_exc()
+#         import traceback
+#         traceback.print_exc()

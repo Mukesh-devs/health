@@ -367,8 +367,7 @@
                     <h2>Knowledge Graph</h2>
                     <p>Visual representation of health relationships</p>
                 </div>
-                <button class="back-to-chat-btn" onclick="window.location.href='./chat.html'">← Back to Chat</button>
-            </div>
+                <button class="back-to-chat-btn" onclick="goBackToChat()">← Back to Chat</button>            </div>
             <div class="graph-container">
                 <svg id="graph-view"></svg>
                 <div class="graph-nav" id="graphNav" style="display: none;">
@@ -411,6 +410,27 @@
             return entity.toLowerCase().trim()
                 .replace(/['']s?\b/g, '') // Remove 's or '
                 .replace(/\s+/g, ' '); // Normalize spaces
+        }
+
+        function parsePublicIdFromUrl() {
+            const pathParts = window.location.pathname.split('/');
+            if (pathParts.length > 2 && pathParts[1] === 'evidence') {
+                const potentialUuid = pathParts[2];
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (uuidRegex.test(potentialUuid)) {
+                    return potentialUuid;
+                }
+            }
+            return null;
+        }
+
+        function goBackToChat() {
+            const publicId = parsePublicIdFromUrl();
+            if (publicId) {
+                window.location.href = `/chat/${publicId}`;
+            } else {
+                window.location.href = '/chat';
+            }
         }
 
         function entitiesMatch(entity1, entity2) {
@@ -511,7 +531,7 @@
         }
 
         function goBack() {
-            window.location.href = './chat.html';
+            window.location.href = '/chat';
         }
 
         function renderTripleEvidence(triple) {

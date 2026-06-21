@@ -40,6 +40,11 @@
             flex-direction: column;
             box-shadow: 4px 0 12px rgba(0, 0, 0, 0.1);
             z-index: 100;
+            transition: transform 0.3s ease;
+        }
+
+        .sidebar.collapsed {
+            transform: translateX(-280px);
         }
 
         .sidebar-header {
@@ -174,7 +179,6 @@
         }
 
         .username::before {
-            /* content: '👤'; */
             font-size: 16px;
         }
 
@@ -193,6 +197,36 @@
             background: rgba(239, 68, 68, 0.3);
         }
 
+        /* Sidebar Toggle Button */
+        .sidebar-toggle {
+            position: fixed;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 101;
+            background: #1f2937;
+            color: white;
+            border: none;
+            width: 32px;
+            height: 60px;
+            border-radius: 0 8px 8px 0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: left 0.3s ease;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.2);
+        }
+
+        .sidebar-toggle.expanded {
+            left: 280px;
+        }
+
+        .sidebar-toggle:hover {
+            background: #374151;
+        }
+
         /* Main Content */
         .main-content {
             margin-left: 280px;
@@ -200,6 +234,12 @@
             flex-direction: column;
             height: 100vh;
             width: calc(100% - 280px);
+            transition: margin-left 0.3s ease, width 0.3s ease;
+        }
+
+        .main-content.full-width {
+            margin-left: 0;
+            width: 100%;
         }
 
         /* Header */
@@ -351,42 +391,94 @@
         /* Input Area */
         .input-area {
             background: white;
-            padding: 25px 30px;
+            padding: 20px 30px;
             box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.05);
             flex-shrink: 0;
             z-index: 10;
         }
 
-        .length-selector {
+        .input-controls-row {
             display: flex;
-            gap: 15px;
-            margin-bottom: 15px;
+            justify-content: space-between;
             align-items: center;
+            margin-bottom: 15px;
+            gap: 15px;
         }
 
-        .length-selector span {
-            font-size: 14px;
+        .dropdown-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dropdown-group label {
+            font-size: 13px;
             color: #6b7280;
             font-weight: 500;
+            white-space: nowrap;
         }
 
-        .length-option {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            cursor: pointer;
+        .custom-dropdown {
+            position: relative;
+            min-width: 140px;
         }
 
-        .length-option input[type="radio"] {
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }
-
-        .length-option label {
-            font-size: 14px;
+        .custom-dropdown select {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 100%;
+            padding: 8px 32px 8px 12px;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 13px;
             color: #374151;
             cursor: pointer;
+            outline: none;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .custom-dropdown select:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .custom-dropdown::after {
+            content: '▼';
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 10px;
+            color: #6b7280;
+            pointer-events: none;
+        }
+
+        .dropdown-right-group {
+            display: flex;
+            gap: 12px;
+        }
+
+        .api-key-btn {
+            padding: 8px 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .api-key-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .api-key-btn.has-key {
+            background: #10b981;
         }
 
         .input-wrapper {
@@ -538,11 +630,142 @@
         .messages::-webkit-scrollbar-thumb:hover {
             background: #9ca3af;
         }
+
+        /* API Key Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            width: 90%;
+            max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            transform: scale(0.9);
+            transition: transform 0.3s ease;
+        }
+
+        .modal-overlay.active .modal-content {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            margin-bottom: 20px;
+        }
+
+        .modal-header h3 {
+            font-size: 20px;
+            color: #1f2937;
+            margin-bottom: 6px;
+        }
+
+        .modal-header p {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .modal-input-group {
+            margin-bottom: 20px;
+        }
+
+        .modal-input-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+
+        .modal-input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .modal-input-group input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .modal-btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .modal-btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .modal-btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        .modal-btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .modal-btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .api-key-status {
+            font-size: 12px;
+            color: #10b981;
+            margin-top: 6px;
+            display: none;
+        }
+
+        .api-key-status.visible {
+            display: block;
+        }
     </style>
+<base target="_blank">
 </head>
 <body>
+    <!-- Sidebar Toggle Button -->
+    <button class="sidebar-toggle" id="sidebarToggle" title="Toggle Sidebar">☰</button>
+
     <!-- Sidebar -->
-    <div class="sidebar">
+    <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <h3>Chat Sessions</h3>
             <button class="menu-btn">⋮</button>
@@ -563,7 +786,7 @@
     </div>
 
     <!-- Main Content -->
-    <div class="main-content">
+    <div class="main-content" id="mainContent">
         <!-- Header -->
         <div class="header">
             <h1>Health Assistant</h1>
@@ -584,21 +807,47 @@
 
         <!-- Input Area -->
         <div class="input-area">
-            <div class="length-selector">
-                <span>Answer Length:</span>
-                <label class="length-option">
-                    <input type="radio" name="length" value="short">
-                    <span>Short</span>
-                </label>
-                <label class="length-option">
-                    <input type="radio" name="length" value="medium" checked>
-                    <span>Medium</span>
-                </label>
-                <label class="length-option">
-                    <input type="radio" name="length" value="long">
-                    <span>Long</span>
-                </label>
+            <div class="input-controls-row">
+                <!-- Left: Answer Length Dropdown -->
+                <div class="dropdown-group">
+                    <label>Answer Length:</label>
+                    <div class="custom-dropdown">
+                        <select id="answerLengthSelect">
+                            <option value="short">Short</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="long">Long</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Right: Provider & Model Dropdowns + API Key Button -->
+                <div class="dropdown-right-group">
+                    <div class="dropdown-group">
+                        <label>Provider:</label>
+                        <div class="custom-dropdown">
+                            <select id="providerSelect">
+                                <option value="">Select Provider</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="anthropic">Anthropic</option>
+                                <option value="google">Google</option>
+                                <option value="groq">Groq</option>
+                                <option value="cohere">Cohere</option>
+                                <option value="mistral">Mistral</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="api-key-btn" id="apiKeyBtn">Set API Key</button>
+                    <div class="dropdown-group">
+                        <label>Model:</label>
+                        <div class="custom-dropdown">
+                            <select id="modelSelect" disabled>
+                                <option value="">Select Model</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
             </div>
+
             <div class="input-wrapper">
                 <input type="text" id="queryInput" placeholder="Ask a Health-related Question...">
                 <button class="stop-btn" id="stopBtn">⏹ Stop</button>
@@ -607,12 +856,31 @@
         </div>
     </div>
 
+    <!-- API Key Modal -->
+    <div class="modal-overlay" id="apiKeyModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Enter API Key</h3>
+                <p id="modalSubtitle">Please provide your API key for the selected provider.</p>
+            </div>
+            <div class="modal-input-group">
+                <label for="apiKeyInput">API Key</label>
+                <input type="password" id="apiKeyInput" placeholder="sk-... or your API key">
+                <div class="api-key-status" id="apiKeyStatus">✓ API key saved for this provider</div>
+            </div>
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-secondary" id="modalCancelBtn">Cancel</button>
+                <button class="modal-btn modal-btn-primary" id="modalSaveBtn">Save Key</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API_BASE_URL = 'http://127.0.0.1:5001/api';
         const token = localStorage.getItem('accessToken');
-        
+
         if (!token) {
-            window.location.href = './login.html';
+            window.location.href = '/login.html';
         }
 
         // Display username
@@ -624,11 +892,279 @@
         let conversationTurns = [];
         let currentEvidenceData = null;
 
-        // Load chat sessions on page load
-        async function loadChatSessions(preserveCurrentSession = false) {
+        // Provider configurations with their model endpoints
+        const PROVIDER_CONFIG = {
+            openai: {
+                name: 'OpenAI',
+                modelsEndpoint: `${API_BASE_URL}/providers/openai/models`,
+                keyPrefix: 'sk-'
+            },
+            anthropic: {
+                name: 'Anthropic',
+                modelsEndpoint: `${API_BASE_URL}/providers/anthropic/models`,
+                keyPrefix: 'sk-ant-'
+            },
+            google: {
+                name: 'Google',
+                modelsEndpoint: `${API_BASE_URL}/providers/google/models`,
+                keyPrefix: ''
+            },
+            groq: {
+                name: 'Groq',
+                modelsEndpoint: `${API_BASE_URL}/providers/groq/models`,
+                keyPrefix: ''
+            },
+            cohere: {
+                name: 'Cohere',
+                modelsEndpoint: `${API_BASE_URL}/providers/cohere/models`,
+                keyPrefix: ''
+            },
+            mistral: {
+                name: 'Mistral',
+                modelsEndpoint: `${API_BASE_URL}/providers/mistral/models`,
+                keyPrefix: ''
+            }
+        };
+
+        // ===== SIDEBAR TOGGLE =====
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        let sidebarCollapsed = false;
+
+        function toggleSidebar() {
+            sidebarCollapsed = !sidebarCollapsed;
+            if (sidebarCollapsed) {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('full-width');
+                sidebarToggle.classList.remove('expanded');
+                sidebarToggle.innerHTML = '☰';
+                sidebarToggle.style.left = '10px';
+            } else {
+                sidebar.classList.remove('collapsed');
+                mainContent.classList.remove('full-width');
+                sidebarToggle.classList.add('expanded');
+                sidebarToggle.innerHTML = '◀';
+                sidebarToggle.style.left = '280px';
+            }
+        }
+
+        sidebarToggle.addEventListener('click', toggleSidebar);
+
+        // ===== PROVIDER & MODEL SELECTION =====
+        const providerSelect = document.getElementById('providerSelect');
+        const modelSelect = document.getElementById('modelSelect');
+        const apiKeyBtn = document.getElementById('apiKeyBtn');
+        const apiKeyModal = document.getElementById('apiKeyModal');
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalSubtitle = document.getElementById('modalSubtitle');
+        const apiKeyStatus = document.getElementById('apiKeyStatus');
+
+        // Load saved selections from localStorage
+        function loadSavedSelections() {
+            const savedProvider = localStorage.getItem('selectedProvider');
+            const savedModel = localStorage.getItem('selectedModel');
+
+            if (savedProvider && PROVIDER_CONFIG[savedProvider]) {
+                providerSelect.value = savedProvider;
+                updateApiKeyButton(savedProvider);
+
+                // Fetch models and then set the saved model
+                fetchModelsForProvider(savedProvider).then(() => {
+                    if (savedModel) {
+                        // Check if the saved model exists in the dropdown
+                        const optionExists = Array.from(modelSelect.options).some(opt => opt.value === savedModel);
+                        if (optionExists) {
+                            modelSelect.value = savedModel;
+                        }
+                    }
+                });
+            }
+        }
+
+        function getApiKeyStorageKey(provider) {
+            return `apiKey_${provider}`;
+        }
+
+        function hasApiKey(provider) {
+            const key = localStorage.getItem(getApiKeyStorageKey(provider));
+            return key && key.trim().length > 0;
+        }
+
+        function updateApiKeyButton(provider) {
+            if (!provider) {
+                apiKeyBtn.textContent = 'Set API Key';
+                apiKeyBtn.classList.remove('has-key');
+                return;
+            }
+            if (hasApiKey(provider)) {
+                apiKeyBtn.textContent = '✓ API Key Set';
+                apiKeyBtn.classList.add('has-key');
+            } else {
+                apiKeyBtn.textContent = 'Set API Key';
+                apiKeyBtn.classList.remove('has-key');
+            }
+        }
+
+        async function fetchModelsForProvider(provider) {
+            if (!provider || !PROVIDER_CONFIG[provider]) {
+                modelSelect.innerHTML = '<option value="">Select Model</option>';
+                modelSelect.disabled = true;
+                return;
+            }
+
+            modelSelect.disabled = true;
+            modelSelect.innerHTML = '<option value="">Loading models...</option>';
+
+            const apiKey = localStorage.getItem(getApiKeyStorageKey(provider));
+
             try {
-                const savedSessionId = currentSessionId;
-                
+                const headers = { 'Authorization': `Bearer ${token}` };
+                if (apiKey) {
+                    headers['X-API-Key'] = apiKey;
+                }
+
+                const response = await fetch(PROVIDER_CONFIG[provider].modelsEndpoint, { headers });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const models = data.models || [];
+
+                    modelSelect.innerHTML = '<option value="">Select Model</option>';
+                    models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.id || model.name;
+                        option.textContent = model.name || model.id;
+                        modelSelect.appendChild(option);
+                    });
+                    modelSelect.disabled = false;
+                } else {
+                    // Fallback: if API fails, allow manual entry or show error
+                    modelSelect.innerHTML = '<option value="">Failed to load models</option>';
+                    modelSelect.disabled = true;
+                }
+            } catch (error) {
+                console.error('Error fetching models:', error);
+                modelSelect.innerHTML = '<option value="">Error loading models</option>';
+                modelSelect.disabled = true;
+            }
+        }
+
+        providerSelect.addEventListener('change', async () => {
+            const provider = providerSelect.value;
+            localStorage.setItem('selectedProvider', provider);
+
+            updateApiKeyButton(provider);
+
+            if (provider) {
+                // Show API key modal if no key is set
+                if (!hasApiKey(provider)) {
+                    openApiKeyModal(provider);
+                } else {
+                    await fetchModelsForProvider(provider);
+                }
+            } else {
+                modelSelect.innerHTML = '<option value="">Select Model</option>';
+                modelSelect.disabled = true;
+            }
+        });
+
+        modelSelect.addEventListener('change', () => {
+            localStorage.setItem('selectedModel', modelSelect.value);
+        });
+
+        // ===== API KEY MODAL =====
+        function openApiKeyModal(provider) {
+            const config = PROVIDER_CONFIG[provider];
+            if (!config) return;
+
+            modalTitle.textContent = `Enter ${config.name} API Key`;
+            modalSubtitle.textContent = `Please provide your API key for ${config.name}. It will be stored locally in your browser.`;
+
+            const existingKey = localStorage.getItem(getApiKeyStorageKey(provider));
+            apiKeyInput.value = existingKey || '';
+
+            if (existingKey) {
+                apiKeyStatus.classList.add('visible');
+            } else {
+                apiKeyStatus.classList.remove('visible');
+            }
+
+            apiKeyModal.dataset.provider = provider;
+            apiKeyModal.classList.add('active');
+            apiKeyInput.focus();
+        }
+
+        function closeApiKeyModal() {
+            apiKeyModal.classList.remove('active');
+            apiKeyModal.dataset.provider = '';
+        }
+
+        apiKeyBtn.addEventListener('click', () => {
+            const provider = providerSelect.value;
+            if (!provider) {
+                alert('Please select a provider first.');
+                providerSelect.focus();
+                return;
+            }
+            openApiKeyModal(provider);
+        });
+
+        document.getElementById('modalCancelBtn').addEventListener('click', closeApiKeyModal);
+
+        apiKeyModal.addEventListener('click', (e) => {
+            if (e.target === apiKeyModal) closeApiKeyModal();
+        });
+
+        document.getElementById('modalSaveBtn').addEventListener('click', async () => {
+            const provider = apiKeyModal.dataset.provider;
+            const key = apiKeyInput.value.trim();
+
+            if (!key) {
+                alert('Please enter an API key.');
+                return;
+            }
+
+            localStorage.setItem(getApiKeyStorageKey(provider), key);
+            updateApiKeyButton(provider);
+            closeApiKeyModal();
+
+            // Fetch models after saving key
+            await fetchModelsForProvider(provider);
+        });
+
+        apiKeyInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('modalSaveBtn').click();
+            }
+        });
+
+        function parsePublicIdFromUrl() {
+            const pathParts = window.location.pathname.split('/');
+            if (pathParts.length > 2 && pathParts[1] === 'chat') {
+                const potentialUuid = pathParts[2];
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (uuidRegex.test(potentialUuid)) {
+                    return potentialUuid;
+                }
+            }
+            return null;
+        }
+
+        function showWelcomeMessage() {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = `
+                <div class="welcome-message">
+                    <h2>Hello! Welcome to Health Assistant</h2>
+                    <p>Ask me anything about health topics and I'll provide evidence-based answers.</p>
+                </div>
+            `;
+        }
+
+        // Load chat sessions on page load
+        async function loadChatSessions() {
+            try {
                 const response = await fetch(`${API_BASE_URL}/sessions`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -640,30 +1176,52 @@
                 if (!response.ok) throw new Error('Failed to fetch chat sessions.');
 
                 chatSessions = await response.json();
-                
-                if (chatSessions.length === 0) {
-                    currentSessionId = null;
-                    await createNewSession();
-                    return;
-                }
-                
-                if (preserveCurrentSession && savedSessionId) {
-                    const sessionExists = chatSessions.some(s => s.id === savedSessionId);
-                    if (sessionExists) {
-                        currentSessionId = savedSessionId;
-                    } else {
-                        currentSessionId = chatSessions[0].id;
+
+                const urlPublicId = parsePublicIdFromUrl();
+
+                // If URL has public_id, validate ownership and load it
+                if (urlPublicId) {
+                    const sessionResponse = await fetch(`${API_BASE_URL}/sessions/${urlPublicId}`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+
+                    if (sessionResponse.ok) {
+                        const session = await sessionResponse.json();
+                        currentSessionId = session.id;
                         await loadChatHistory(currentSessionId);
+                    } else {
+                        window.history.replaceState({}, "", "/chat");
+                        currentSessionId = null;
+                        showWelcomeMessage();
                     }
-                } else if (!savedSessionId) {
-                    currentSessionId = chatSessions[0].id;
-                    await loadChatHistory(currentSessionId);
+                } else {
+                    // No session in URL - show welcome, don't auto-select
+                    currentSessionId = null;
+                    showWelcomeMessage();
                 }
-                
+
                 renderChatSessions();
-                
+
             } catch (error) {
                 console.error('Error loading chat sessions:', error);
+            }
+        }
+
+        async function refreshSidebar() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/sessions`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (response.status === 401) {
+                    handleLogout();
+                    return;
+                }
+                if (response.ok) {
+                    chatSessions = await response.json();
+                    renderChatSessions();
+                }
+            } catch (error) {
+                console.error('Error refreshing sidebar:', error);
             }
         }
 
@@ -674,6 +1232,8 @@
             chatSessions.forEach(session => {
                 const chatItem = document.createElement('div');
                 chatItem.className = 'chat-item';
+                chatItem.dataset.publicId = session.public_id;
+                chatItem.dataset.sessionId = session.id;
                 if (session.id === currentSessionId) {
                     chatItem.classList.add('active');
                 }
@@ -684,21 +1244,21 @@
                         <div class="chat-title">${session.title}</div>
                         <div class="chat-meta">${session.message_count} messages • ${date.toLocaleDateString()}</div>
                     </div>
-                    <button class="delete-chat-btn" onclick="event.stopPropagation(); deleteSession(${session.id})">🗑️</button>
+                    <button class="delete-chat-btn" onclick="event.stopPropagation(); deleteSession('${session.public_id}')">🗑️</button>
                 `;
 
-                chatItem.onclick = () => switchSession(session.id);
+                chatItem.onclick = () => switchSession(session.public_id);
                 chatList.appendChild(chatItem);
             });
         }
 
-        async function deleteSession(sessionId) {
+        async function deleteSession(publicId) {
             if (!confirm('Are you sure you want to delete this chat session?')) {
                 return;
             }
 
             try {
-                const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+                const response = await fetch(`${API_BASE_URL}/sessions/${publicId}`, {
                     method: 'DELETE',
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -709,17 +1269,14 @@
                 }
                 if (!response.ok) throw new Error('Failed to delete session.');
 
-                // Remove from local array
-                chatSessions = chatSessions.filter(s => s.id !== sessionId);
+                const deletedSession = chatSessions.find(s => s.public_id === publicId);
+                chatSessions = chatSessions.filter(s => s.public_id !== publicId);
 
-                // If deleted session was current, switch to first available or create new
-                if (sessionId === currentSessionId) {
-                    if (chatSessions.length > 0) {
-                        currentSessionId = chatSessions[0].id;
-                        await loadChatHistory(currentSessionId);
-                    } else {
-                        await createNewSession();
-                    }
+                if (deletedSession && deletedSession.id === currentSessionId) {
+                    currentSessionId = null;
+                    window.history.pushState({}, "", "/chat");
+                    conversationTurns = [];
+                    showWelcomeMessage();
                 }
 
                 renderChatSessions();
@@ -729,49 +1286,22 @@
             }
         }
 
-        async function createNewSession() {
-            try {
-                const response = await fetch(`${API_BASE_URL}/sessions`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ title: 'New Chat' })
-                });
-
-                if (response.status === 401) {
-                    handleLogout();
-                    return;
-                }
-                if (!response.ok) throw new Error('Failed to create session.');
-
-                const newSession = await response.json();
-                currentSessionId = newSession.id;
-                chatSessions.unshift(newSession);
-                
-                conversationTurns = [];
-                const messagesDiv = document.getElementById('messages');
-                messagesDiv.innerHTML = `
-                    <div class="welcome-message">
-                        <h2>Hello! Welcome to Health Assistant</h2>
-                        <p>Ask me anything about health topics and I'll provide evidence-based answers.</p>
-                    </div>
-                `;
-                
-                renderChatSessions();
-
-            } catch (error) {
-                console.error('Error creating new session:', error);
-            }
+        function createNewSession() {
+            window.history.pushState({}, "", "/chat");
+            currentSessionId = null;
+            conversationTurns = [];
+            showWelcomeMessage();
+            renderChatSessions();
         }
 
-        async function switchSession(sessionId) {
-            if (sessionId === currentSessionId) return;
-            
-            currentSessionId = sessionId;
+        async function switchSession(publicId) {
+            const session = chatSessions.find(s => s.public_id === publicId);
+            if (!session || session.id === currentSessionId) return;
+
+            currentSessionId = session.id;
+            window.history.pushState({}, "", `/chat/${publicId}`);
             renderChatSessions();
-            await loadChatHistory(sessionId);
+            await loadChatHistory(session.id);
         }
 
         async function loadChatHistory(sessionId) {
@@ -794,12 +1324,7 @@
                 messagesDiv.innerHTML = '';
 
                 if (conversationTurns.length === 0) {
-                    messagesDiv.innerHTML = `
-                        <div class="welcome-message">
-                            <h2>Hello! Welcome to Health Assistant</h2>
-                            <p>Ask me anything about health topics and I'll provide evidence-based answers.</p>
-                        </div>
-                    `;
+                    showWelcomeMessage();
                 } else {
                     conversationTurns.forEach(turn => {
                         displayMessage(turn.userQuery, 'user');
@@ -821,87 +1346,94 @@
 
         // Extended color palette - NO RED colors (red reserved for no-evidence in graph only)
         const d3ColorScheme = [
-            '#4e79a7', '#f28e2c', '#76b7b2', '#59a14f', // blue, orange, teal, green
-            '#edc949', '#af7aa1', '#9c755f', '#bab0ab', // yellow, purple, brown, gray
-            '#17becf', '#bcbd22', '#9467bd', '#8c564b', // cyan, olive, violet, chocolate
-            '#7f7f7f', '#2ca02c', '#ff7f0e', '#1f77b4', // steel gray, forest green, dark orange, steel blue
-            '#4ecdc4', '#95e1d3', '#aa96da', '#fcbad3', // turquoise, mint, lavender, light pink
-            '#a8d8ea', '#c7ceea', '#ffd3b6', '#a8e6cf', // sky blue, periwinkle, peach, seafoam
-            '#dcedc1', '#6c5ce7', '#00b894', '#fdcb6e', // pistachio, bright purple, emerald, sunflower
-            '#e84393', '#0984e3', '#00cec9', '#a29bfe', // magenta, azure, caribbean, periwinkle blue
-            '#fab1a0', '#74b9ff', '#55efc4', '#ffeaa7', // terracotta, baby blue, aqua green, cream
-            '#55e6c1', '#778beb', '#f8a5c2', '#63cdda'  // mint green, blue purple, pink, blue teal
+            '#4e79a7', '#f28e2c', '#76b7b2', '#59a14f',
+            '#edc949', '#af7aa1', '#9c755f', '#bab0ab',
+            '#17becf', '#bcbd22', '#9467bd', '#8c564b',
+            '#7f7f7f', '#2ca02c', '#ff7f0e', '#1f77b4',
+            '#4ecdc4', '#95e1d3', '#aa96da', '#fcbad3',
+            '#a8d8ea', '#c7ceea', '#ffd3b6', '#a8e6cf',
+            '#dcedc1', '#6c5ce7', '#00b894', '#fdcb6e',
+            '#e84393', '#0984e3', '#00cec9', '#a29bfe',
+            '#fab1a0', '#74b9ff', '#55efc4', '#ffeaa7',
+            '#55e6c1', '#778beb', '#f8a5c2', '#63cdda'
         ];
-        
-        const NO_EVIDENCE_COLOR = '#dc2626'; // Red - NOT used in chat highlights (only in graph)
+
+        const NO_EVIDENCE_COLOR = '#dc2626';
 
         function normalizeEntity(entity) {
-            // Normalize entity for matching (lowercase, trim, remove possessives, etc.)
             return entity.toLowerCase().trim()
-                .replace(/['']s?\b/g, '') // Remove 's or '
-                .replace(/\s+/g, ' '); // Normalize spaces
+                .replace(/['']s?/g, '')
+                .replace(/\s+/g, ' ');
         }
 
         function entitiesMatch(entity1, entity2) {
-            // Check if two entities match (exact or close match)
             const norm1 = normalizeEntity(entity1);
             const norm2 = normalizeEntity(entity2);
-            
-            // Exact match
+
             if (norm1 === norm2) return true;
-            
-            // One contains the other (for partial matches like "alzheimer" vs "alzheimer's disease")
             if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
-            
-            // Split by spaces and check if main words match
+
             const words1 = norm1.split(/\s+/);
             const words2 = norm2.split(/\s+/);
             const commonWords = words1.filter(w => words2.includes(w));
-            
-            // If they share significant words, consider it a match
+
             if (commonWords.length > 0 && commonWords.length >= Math.min(words1.length, words2.length) * 0.5) {
                 return true;
             }
-            
+
             return false;
         }
 
         function buildEntityColorMapFromTriples(validatedTriples) {
-            // Build color map based on TRIPLES that have evidence (not just entities)
             const colorMap = new Map();
-            const entitiesWithEvidence = new Map(); // Store original entity names
-            const triplesWithEvidence = []; // Store triples that have evidence
-            
+            const entitiesWithEvidence = new Map();
+            const entitiesWithoutEvidence = new Map();
+            const triplesWithEvidence = [];
+
             if (!validatedTriples) return { colorMap, entitiesWithEvidence, triplesWithEvidence };
-            
+
             validatedTriples.forEach(triple => {
-                // Check if triple has evidence (either static KG or live PubMed)
-                const hasStaticEvidence = (triple.pubmed_ids && triple.pubmed_ids.length > 0) || 
-                                         triple.sentence ||
-                                         (triple.static_kg && triple.static_kg.evidence_found);
+                const hasStaticPubmedIds = triple.pubmed_ids && triple.pubmed_ids.length > 0;
+                const hasStaticSentence = triple.sentence && triple.sentence.trim() !== '';
+                const hasStaticKGEvidence = triple.static_kg && triple.static_kg.evidence_found;
                 const hasLiveEvidence = triple.live_pubmed && triple.live_pubmed.found_new_evidence;
-                
-                if (hasStaticEvidence || hasLiveEvidence) {
-                    // This triple has evidence - store the triple and its entities
+                const status = (triple.status || "").toLowerCase();
+                const hasStatusBasedEvidence = status === 'supported' || 
+                                              status === 'contradictory_evidence' || 
+                                              status === 'emerging_evidence';
+
+                const hasEvidence = hasStaticPubmedIds || hasStaticSentence || hasStaticKGEvidence || 
+                                   hasLiveEvidence || hasStatusBasedEvidence;
+
+
+                if (hasEvidence) {
                     triplesWithEvidence.push({
                         subject: normalizeEntity(triple.subject),
                         object: normalizeEntity(triple.object),
                         relation: triple.relation
                     });
-                    
-                    // Add entities to color map
-                    if (triple.subject) {
-                        const normalized = normalizeEntity(triple.subject);
+                }
+                if (triple.subject) {
+                    const normalized = normalizeEntity(triple.subject);
+                    if (hasEvidence) {
                         entitiesWithEvidence.set(normalized, triple.subject);
+                        entitiesWithoutEvidence.delete(normalized);
+                    } else if (!entitiesWithEvidence.has(normalized)) {
+                        entitiesWithoutEvidence.set(normalized, triple.subject);
                     }
-                    if (triple.object) {
-                        const normalized = normalizeEntity(triple.object);
+                }
+
+                if (triple.object) {
+                    const normalized = normalizeEntity(triple.object);
+                    if (hasEvidence) {
                         entitiesWithEvidence.set(normalized, triple.object);
+                        entitiesWithoutEvidence.delete(normalized);
+                    } else if (!entitiesWithEvidence.has(normalized)) {
+                        entitiesWithoutEvidence.set(normalized, triple.object);
                     }
                 }
             });
-            
-            // Assign colors to entities with evidence in order
+
             let colorIndex = 0;
             entitiesWithEvidence.forEach((originalEntity, normalizedEntity) => {
                 if (!colorMap.has(normalizedEntity)) {
@@ -909,29 +1441,27 @@
                     colorIndex++;
                 }
             });
-            
-            return { colorMap, entitiesWithEvidence, triplesWithEvidence };
+
+            entitiesWithoutEvidence.forEach((originalEntity, normalizedEntity) => {
+                if (!colorMap.has(normalizedEntity)) {
+                    colorMap.set(normalizedEntity, NO_EVIDENCE_COLOR);
+                }
+            });
+
+            return { colorMap, entitiesWithEvidence, entitiesWithoutEvidence, triplesWithEvidence };
         }
 
         function highlightEntitiesInText(text, responseData) {
-            if (!responseData) {
+            if (!responseData || !responseData.highlightedResponse) {
                 return text;
             }
 
-            // If no highlightedResponse, return plain text
-            if (!responseData.highlightedResponse) {
-                return text;
-            }
-
-            // Build color map from triples that have evidence (not just entities)
             const { colorMap, entitiesWithEvidence, triplesWithEvidence } = buildEntityColorMapFromTriples(responseData.validatedTriples);
 
-            // Parse the highlightedResponse markers (*|entity|*) and apply colors ONLY if in context
             const regex = /\*\|(.*?)\|\*/g;
             let highlightedText = responseData.highlightedResponse;
             const fullText = highlightedText.toLowerCase();
-            
-            // Process each match with context awareness
+
             let matches = [];
             let match;
             while ((match = regex.exec(highlightedText)) !== null) {
@@ -942,44 +1472,35 @@
                     fullMatch: match[0]
                 });
             }
-            
-            // Process in reverse to maintain indices
+
             matches.reverse().forEach(({ index, length, entity, fullMatch }) => {
                 const normalizedEntity = normalizeEntity(entity);
-                
-                // Get context around this occurrence (100 chars before and after)
+
                 const contextStart = Math.max(0, index - 100);
                 const contextEnd = Math.min(fullText.length, index + length + 100);
                 const context = fullText.substring(contextStart, contextEnd);
-                
+
                 let shouldHighlight = false;
                 let matchedColor = null;
-                
-                // Check if this occurrence is part of a triple with evidence
+
                 for (const triple of triplesWithEvidence) {
-                    // Check if this entity is the subject or object of this triple
                     const isSubject = entitiesMatch(normalizedEntity, triple.subject);
                     const isObject = entitiesMatch(normalizedEntity, triple.object);
-                    
+
                     if (isSubject || isObject) {
-                        // Check if the OTHER entity from the triple is in the context
                         const otherEntity = isSubject ? triple.object : triple.subject;
-                        
-                        // Split into words and check for presence in context
                         const otherWords = otherEntity.split(/\s+/).filter(w => w.length > 2);
                         let wordsFound = 0;
-                        
+
                         for (const word of otherWords) {
                             if (context.includes(word)) {
                                 wordsFound++;
                             }
                         }
-                        
-                        // If majority of words from other entity are in context, this is the right occurrence
+
                         if (otherWords.length > 0 && wordsFound / otherWords.length >= 0.5) {
                             shouldHighlight = true;
-                            
-                            // Get the color for this specific entity
+
                             for (const [evidenceEntity, color] of colorMap.entries()) {
                                 if (entitiesMatch(normalizedEntity, evidenceEntity)) {
                                     matchedColor = color;
@@ -990,16 +1511,14 @@
                         }
                     }
                 }
-                
-                // Replace the match
+
                 let replacement;
                 if (shouldHighlight && matchedColor) {
                     replacement = `<span style="background: ${matchedColor}; color: white; padding: 2px 6px; border-radius: 4px; font-weight: 600; white-space: nowrap;">${entity}</span>`;
                 } else {
-                    // No evidence or not in triple context - show as plain text
                     replacement = entity;
                 }
-                
+
                 highlightedText = highlightedText.substring(0, index) + replacement + highlightedText.substring(index + length);
             });
 
@@ -1010,8 +1529,7 @@
             const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${sender}`;
-            
-            // Apply entity highlighting with KG graph colors for AI messages
+
             if (sender === 'ai' && responseData) {
                 const highlightedText = highlightEntitiesInText(text, responseData);
                 messageDiv.innerHTML = highlightedText;
@@ -1019,33 +1537,31 @@
                 messageDiv.textContent = text;
             }
 
-            // Create a container for button and recommendations
             if (sender === 'ai' && responseData && (responseData.validatedTriples?.length > 0 || responseData.recommendations?.length > 0)) {
                 const actionsContainer = document.createElement('div');
                 actionsContainer.style.marginTop = '15px';
-                
-                // Add evidence button if available
+
                 if (responseData.validatedTriples && responseData.validatedTriples.length > 0) {
                     const evidenceBtn = document.createElement('button');
                     evidenceBtn.className = 'evidence-btn';
                     evidenceBtn.textContent = 'Click for Evidence';
                     evidenceBtn.onclick = () => {
-                        // Store evidence data and navigate to evidence page
                         localStorage.setItem('currentEvidence', JSON.stringify(responseData));
-                        window.location.href = './evidence.html';
+                        const currentSession = chatSessions.find(s => s.id === currentSessionId);
+                        const publicId = currentSession ? currentSession.public_id : null;
+                        window.location.href = publicId ? `/evidence/${publicId}` : '/evidence';
                     };
                     actionsContainer.appendChild(evidenceBtn);
                 }
-                
-                // Add recommendations below the evidence button
+
                 if (responseData.recommendations && responseData.recommendations.length > 0) {
                     const recContainer = document.createElement('div');
                     recContainer.className = 'recommendations-container';
-                    
+
                     const title = document.createElement('p');
                     title.textContent = 'Suggested Questions:';
                     recContainer.appendChild(title);
-                    
+
                     responseData.recommendations.forEach(recText => {
                         const recBtn = document.createElement('button');
                         recBtn.className = 'recommendation-btn';
@@ -1056,10 +1572,10 @@
                         };
                         recContainer.appendChild(recBtn);
                     });
-                    
+
                     actionsContainer.appendChild(recContainer);
                 }
-                
+
                 messageDiv.appendChild(actionsContainer);
             }
 
@@ -1074,23 +1590,50 @@
             const query = queryInput.value.trim();
             if (!query) return;
 
-            // Prevent multiple queries at once
             if (isProcessing) {
                 alert('Please wait for the current query to complete or click Stop.');
                 return;
             }
 
-            if (!currentSessionId) {
-                alert('Please create or select a chat session first.');
-                return;
-            }
-
-            const answerLength = document.querySelector('input[name="length"]:checked').value;
+            const answerLength = document.getElementById('answerLengthSelect').value;
+            const selectedProvider = providerSelect.value;
+            const selectedModel = modelSelect.value;
 
             displayMessage(query, 'user');
             queryInput.value = '';
 
-            // Set processing state
+            // If no session exists, create one first
+            if (!currentSessionId) {
+                try {
+                    const sessionResponse = await fetch(`${API_BASE_URL}/sessions`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ title: 'New Chat' })
+                    });
+
+                    if (sessionResponse.status === 401) {
+                        handleLogout();
+                        return;
+                    }
+                    if (!sessionResponse.ok) throw new Error('Failed to create session.');
+
+                    const newSession = await sessionResponse.json();
+                    currentSessionId = newSession.id;
+                    chatSessions.unshift(newSession);
+
+                    window.history.pushState({}, "", `/chat/${newSession.public_id}`);
+
+                    renderChatSessions();
+                } catch (error) {
+                    console.error('Error creating session:', error);
+                    alert('Failed to create chat session. Please try again.');
+                    return;
+                }
+            }
+
             isProcessing = true;
             abortController = new AbortController();
             toggleProcessingUI(true);
@@ -1102,17 +1645,31 @@
             scrollToBottom();
 
             try {
+                const requestBody = { 
+                    query, 
+                    answerLength,
+                    session_id: currentSessionId
+                };
+
+                // Add provider and model if selected
+                if (selectedProvider) {
+                    requestBody.provider = selectedProvider;
+                    const apiKey = localStorage.getItem(getApiKeyStorageKey(selectedProvider));
+                    if (apiKey) {
+                        requestBody.apiKey = apiKey;
+                    }
+                }
+                if (selectedModel) {
+                    requestBody.model = selectedModel;
+                }
+
                 const response = await fetch(`${API_BASE_URL}/query`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${token}`
                     },
-                    body: JSON.stringify({ 
-                        query, 
-                        answerLength,
-                        session_id: currentSessionId
-                    }),
+                    body: JSON.stringify(requestBody),
                     signal: abortController.signal
                 });
 
@@ -1136,19 +1693,18 @@
                 }
 
                 scrollToBottom();
-                await loadChatSessions(true);
+                await refreshSidebar();
 
             } catch (error) {
                 console.error('Error:', error);
                 thinkingMsg.remove();
-                
+
                 if (error.name === 'AbortError') {
                     displayMessage('Query stopped by user.', 'ai');
                 } else {
                     displayMessage(`Sorry, an error occurred: ${error.message}`, 'ai');
                 }
             } finally {
-                // Reset processing state
                 isProcessing = false;
                 abortController = null;
                 toggleProcessingUI(false);
@@ -1185,8 +1741,46 @@
         function handleLogout() {
             localStorage.removeItem('accessToken');
             localStorage.removeItem('username');
-            window.location.href = './login.html';
+            window.location.href = '/login.html';
         }
+
+        // Handle browser back/forward buttons
+        window.addEventListener('popstate', async () => {
+            const urlPublicId = parsePublicIdFromUrl();
+
+            if (urlPublicId) {
+                const session = chatSessions.find(s => s.public_id === urlPublicId);
+                if (session && session.id !== currentSessionId) {
+                    currentSessionId = session.id;
+                    await loadChatHistory(session.id);
+                } else if (!session) {
+                    // Try fetching the session
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/sessions/${urlPublicId}`, {
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        if (response.ok) {
+                            const sessionData = await response.json();
+                            currentSessionId = sessionData.id;
+                            await loadChatHistory(sessionData.id);
+                        } else {
+                            currentSessionId = null;
+                            conversationTurns = [];
+                            showWelcomeMessage();
+                        }
+                    } catch (e) {
+                        currentSessionId = null;
+                        conversationTurns = [];
+                        showWelcomeMessage();
+                    }
+                }
+            } else if (!urlPublicId && currentSessionId) {
+                currentSessionId = null;
+                conversationTurns = [];
+                showWelcomeMessage();
+            }
+            renderChatSessions();
+        });
 
         // Event Listeners
         document.getElementById('newChatBtn').addEventListener('click', createNewSession);
@@ -1199,6 +1793,7 @@
 
         // Initialize
         loadChatSessions();
+        loadSavedSelections();
     </script>
 </body>
 </html>

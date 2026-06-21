@@ -149,7 +149,7 @@
 
         // If user is already logged in, redirect them to the chat page
         if (localStorage.getItem('accessToken')) {
-            window.location.href = 'chat.html'; // Make sure your main chat file is named index.html
+            window.location.href = '/chat'; // Make sure your main chat file is named index.html
         }
         
         function toggleForms() {
@@ -216,7 +216,7 @@
                 // On successful login, save the token and username, then redirect
                 localStorage.setItem('accessToken', data.access_token);
                 localStorage.setItem('username', username);
-                window.location.href = 'chat.html'; // Your main chat page
+                window.location.href = '/chat'; // Your main chat page
 
             } catch (error) {
                 show_error(error.message);
