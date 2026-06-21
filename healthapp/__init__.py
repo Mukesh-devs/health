@@ -62,12 +62,20 @@ def create_app(config_name='default'):
     def chat_page_html():
         return send_from_directory(STATIC_DIR, 'chat.html')
 
+    @app.route('/chat/<public_id>')
+    def chat_session(public_id):
+        return send_from_directory(STATIC_DIR, 'chat.html')
+
     @app.route('/evidence')
     def evidence_page():
         return send_from_directory(STATIC_DIR, 'evidence.html')
 
     @app.route('/evidence.html')
     def evidence_page_html():
+        return send_from_directory(STATIC_DIR, 'evidence.html')
+
+    @app.route('/evidence/<public_id>')
+    def evidence_session(public_id):
         return send_from_directory(STATIC_DIR, 'evidence.html')
     
     # Initialize knowledge graph and embeddings

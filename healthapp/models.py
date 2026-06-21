@@ -3,6 +3,7 @@ Database Models
 """
 from datetime import datetime, timezone
 from . import db, bcrypt
+import uuid
 
 class User(db.Model):
     """User model for authentication"""
@@ -20,6 +21,12 @@ class User(db.Model):
 class ChatSession(db.Model):
     """Model to track multiple chat sessions for each user"""
     id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(
+    db.String(36),
+    unique=True,
+    nullable=False,
+    default=lambda: str(uuid.uuid4())
+    )
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     title = db.Column(db.String(200), nullable=False, default="New Chat")
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))

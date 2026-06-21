@@ -45,23 +45,24 @@ def get_sessions():
         
         sessions_data.append({
             'id': session.id,
+            'public_id': session.public_id,
             'title': session.title,
             'created_at': session.created_at.isoformat(),
             'updated_at': session.updated_at.isoformat(),
             'message_count': message_count or 0
         })
-        print(f"{YELLOW}  - Session {session.id}: {session.title} ({message_count or 0} messages){RESET}")
-    
+
+    print(f"{YELLOW}  - Session {session.id} (public_id={session.public_id}): {session.title} ({message_count or 0} messages){RESET}")    
     print(f"{CYAN}{'='*80}{RESET}\n")
     return jsonify(sessions_data), 200
 
-@sessions_bp.route('/sessions/<int:session_id>', methods=['GET'])
+@sessions_bp.route('/sessions/<public_id>', methods=['GET'])
 @jwt_required()
-def get_session(session_id):
+def get_session(public_id):
     """Get a specific chat session"""
     user_id = int(get_jwt_identity())
     session = db.session.scalar(
-        db.select(ChatSession).filter_by(id=session_id, user_id=user_id)
+        db.select(ChatSession).filter_by(public_id=public_id, user_id=user_id)
     )
     
     if not session:
@@ -69,6 +70,7 @@ def get_session(session_id):
     
     return jsonify({
         'id': session.id,
+        'public_id': session.public_id,
         'title': session.title,
         'created_at': session.created_at.isoformat(),
         'updated_at': session.updated_at.isoformat()
@@ -101,20 +103,21 @@ def create_session():
     db.session.add(new_session)
     db.session.commit()
     
-    print(f"{GREEN}✓ Session created with ID: {new_session.id}{RESET}")
+    print(f"{GREEN}✓ Session created with ID: {new_session.id}, public_id: {new_session.public_id}{RESET}")
     print(f"{CYAN}{'='*80}{RESET}\n")
     
     return jsonify({
         'id': new_session.id,
+        'public_id': new_session.public_id,
         'title': new_session.title,
         'created_at': new_session.created_at.isoformat(),
         'updated_at': new_session.updated_at.isoformat(),
         'message_count': 0
     }), 201
 
-@sessions_bp.route('/sessions/<int:session_id>', methods=['DELETE'])
+@sessions_bp.route('/sessions/<public_id>', methods=['DELETE'])
 @jwt_required()
-def delete_session(session_id):
+def delete_session(public_id):
     """Delete a chat session"""
     # ANSI color codes
     CYAN = '\033[96m'
@@ -129,41 +132,42 @@ def delete_session(session_id):
     print(f"{CYAN}{BOLD}[DATABASE MODULE] Delete Session{RESET}")
     print(f"{CYAN}{'='*80}{RESET}")
     print(f"{YELLOW}User ID: {user_id}{RESET}")
-    print(f"{YELLOW}Session ID: {session_id}{RESET}")
+    print(f"{YELLOW}Public ID: {public_id}{RESET}")
     
-    session = db.session.get(ChatSession, session_id)
-    
-    if not session or session.user_id != user_id:
+    session = db.session.scalar(
+        db.select(ChatSession).filter_by(public_id=public_id, user_id=user_id)
+    )    
+    if not session:
         print(f"{YELLOW}[ERROR] Session not found or unauthorized{RESET}")
         print(f"{CYAN}{'='*80}{RESET}\n")
         return jsonify({"error": "Session not found"}), 404
-    
+
+    session_id = session.id
     # Delete all messages in this session
     print(f"{YELLOW}[Query] DELETE FROM chat_history WHERE session_id={session_id}{RESET}")
     db.session.execute(
         db.delete(ChatHistory).where(ChatHistory.session_id == session_id)
     )
     print(f"{GREEN}✓ Messages deleted{RESET}")
-    
-    # Delete the session
+
     print(f"{YELLOW}[Query] DELETE FROM chat_sessions WHERE id={session_id}{RESET}")
     db.session.delete(session)
     db.session.commit()
-    
-    print(f"{GREEN}✓ Session {session_id} deleted successfully{RESET}")
+
+    print(f"{GREEN}✓ Session {session_id} (public_id={public_id}) deleted successfully{RESET}")
     print(f"{CYAN}{'='*80}{RESET}\n")
-    
+
     return jsonify({"message": "Session deleted successfully"}), 200
 
-@sessions_bp.route('/sessions/<int:session_id>/history', methods=['GET'])
+@sessions_bp.route('/sessions/<public_id>/history', methods=['GET'])
 @jwt_required()
-def get_session_history(session_id):
+def get_session_history(public_id):
     """Get chat history for a specific session"""
     user_id = int(get_jwt_identity())
     
     # Verify session belongs to user
     session = db.session.scalar(
-        db.select(ChatSession).filter_by(id=session_id, user_id=user_id)
+        db.select(ChatSession).filter_by(public_id=public_id, user_id=user_id)
     )
     if not session:
         return jsonify({"error": "Session not found"}), 404

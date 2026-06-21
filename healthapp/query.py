@@ -533,7 +533,16 @@ def get_history():
     """Get chat history for a specific session or all history"""
     current_user_id = get_jwt_identity()
     session_id = request.args.get('session_id', type=int)
-    
+    public_id = request.args.get('public_id', type=str)
+
+    if public_id:
+        session = db.session.scalar(
+            db.select(ChatSession).filter_by(public_id=public_id, user_id=current_user_id)
+        )
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        session_id = session.id
+        
     if session_id:
         # Get history for specific session
         history_records = db.session.scalars(

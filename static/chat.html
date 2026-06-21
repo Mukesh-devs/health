@@ -539,6 +539,8 @@
             background: #9ca3af;
         }
     </style>
+<base target="_blank">
+<base target="_blank">
 </head>
 <body>
     <!-- Sidebar -->
@@ -608,130 +610,486 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://127.0.0.1:5001/api';
-        const token = localStorage.getItem('accessToken');
-        
-        if (!token) {
-            window.location.href = './login.html';
+            const API_BASE_URL = 'http://127.0.0.1:5001/api';
+    const token = localStorage.getItem('accessToken');
+    
+    if (!token) {
+        window.location.href = '/login.html';
+    }
+
+    // Display username
+    const username = localStorage.getItem('username') || 'User';
+    document.getElementById('username').textContent = username;
+
+    let currentSessionId = null;
+    let chatSessions = [];
+    let conversationTurns = [];
+    let currentEvidenceData = null;
+
+    function parsePublicIdFromUrl() {
+    const pathParts = window.location.pathname.split('/');
+    if (pathParts.length > 2 && pathParts[1] === 'chat') {
+        const potentialUuid = pathParts[2];
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidRegex.test(potentialUuid)) {
+            return potentialUuid;
         }
+    }
+    return null;
+}
 
-        // Display username
-        const username = localStorage.getItem('username') || 'User';
-        document.getElementById('username').textContent = username;
+    function showWelcomeMessage() {
+        const messagesDiv = document.getElementById('messages');
+        messagesDiv.innerHTML = `
+            <div class="welcome-message">
+                <h2>Hello! Welcome to Health Assistant</h2>
+                <p>Ask me anything about health topics and I'll provide evidence-based answers.</p>
+            </div>
+        `;
+    }
 
-        let currentSessionId = null;
-        let chatSessions = [];
-        let conversationTurns = [];
-        let currentEvidenceData = null;
-
-        // Load chat sessions on page load
-        async function loadChatSessions(preserveCurrentSession = false) {
-            try {
-                const savedSessionId = currentSessionId;
-                
-                const response = await fetch(`${API_BASE_URL}/sessions`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-
-                if (response.status === 401) {
-                    handleLogout();
-                    return;
-                }
-                if (!response.ok) throw new Error('Failed to fetch chat sessions.');
-
-                chatSessions = await response.json();
-                
-                if (chatSessions.length === 0) {
-                    currentSessionId = null;
-                    await createNewSession();
-                    return;
-                }
-                
-                if (preserveCurrentSession && savedSessionId) {
-                    const sessionExists = chatSessions.some(s => s.id === savedSessionId);
-                    if (sessionExists) {
-                        currentSessionId = savedSessionId;
-                    } else {
-                        currentSessionId = chatSessions[0].id;
-                        await loadChatHistory(currentSessionId);
-                    }
-                } else if (!savedSessionId) {
-                    currentSessionId = chatSessions[0].id;
-                    await loadChatHistory(currentSessionId);
-                }
-                
-                renderChatSessions();
-                
-            } catch (error) {
-                console.error('Error loading chat sessions:', error);
-            }
-        }
-
-        function renderChatSessions() {
-            const chatList = document.getElementById('chatList');
-            chatList.innerHTML = '';
-
-            chatSessions.forEach(session => {
-                const chatItem = document.createElement('div');
-                chatItem.className = 'chat-item';
-                if (session.id === currentSessionId) {
-                    chatItem.classList.add('active');
-                }
-
-                const date = new Date(session.updated_at);
-                chatItem.innerHTML = `
-                    <div class="chat-item-content">
-                        <div class="chat-title">${session.title}</div>
-                        <div class="chat-meta">${session.message_count} messages • ${date.toLocaleDateString()}</div>
-                    </div>
-                    <button class="delete-chat-btn" onclick="event.stopPropagation(); deleteSession(${session.id})">🗑️</button>
-                `;
-
-                chatItem.onclick = () => switchSession(session.id);
-                chatList.appendChild(chatItem);
+    // Load chat sessions on page load
+    async function loadChatSessions() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/sessions`, {
+                headers: { 'Authorization': `Bearer ${token}` }
             });
-        }
 
-        async function deleteSession(sessionId) {
-            if (!confirm('Are you sure you want to delete this chat session?')) {
+            if (response.status === 401) {
+                handleLogout();
                 return;
             }
+            if (!response.ok) throw new Error('Failed to fetch chat sessions.');
 
-            try {
-                const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
-                    method: 'DELETE',
+            chatSessions = await response.json();
+            
+            const urlPublicId = parsePublicIdFromUrl();
+
+            // If URL has public_id, validate ownership and load it
+            if (urlPublicId) {
+                const sessionResponse = await fetch(`${API_BASE_URL}/sessions/${urlPublicId}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
-
-                if (response.status === 401) {
-                    handleLogout();
-                    return;
+                
+                if (sessionResponse.ok) {
+                    const session = await sessionResponse.json();
+                    currentSessionId = session.id;
+                    await loadChatHistory(currentSessionId);
+                } else {
+                    window.history.replaceState({}, "", "/chat");
+                    currentSessionId = null;
+                    showWelcomeMessage();
                 }
-                if (!response.ok) throw new Error('Failed to delete session.');
-
-                // Remove from local array
-                chatSessions = chatSessions.filter(s => s.id !== sessionId);
-
-                // If deleted session was current, switch to first available or create new
-                if (sessionId === currentSessionId) {
-                    if (chatSessions.length > 0) {
-                        currentSessionId = chatSessions[0].id;
-                        await loadChatHistory(currentSessionId);
-                    } else {
-                        await createNewSession();
-                    }
-                }
-
-                renderChatSessions();
-            } catch (error) {
-                console.error('Error deleting session:', error);
-                alert('Failed to delete session. Please try again.');
+            } else {
+                // No session in URL - show welcome, don't auto-select
+                currentSessionId = null;
+                showWelcomeMessage();
             }
+            
+            renderChatSessions();
+            
+        } catch (error) {
+            console.error('Error loading chat sessions:', error);
+        }
+    }
+
+    async function refreshSidebar() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/sessions`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (response.status === 401) {
+                handleLogout();
+                return;
+            }
+            if (response.ok) {
+                chatSessions = await response.json();
+                renderChatSessions();
+            }
+        } catch (error) {
+            console.error('Error refreshing sidebar:', error);
+        }
+    }
+
+    function renderChatSessions() {
+        const chatList = document.getElementById('chatList');
+        chatList.innerHTML = '';
+
+        chatSessions.forEach(session => {
+            const chatItem = document.createElement('div');
+            chatItem.className = 'chat-item';
+            chatItem.dataset.publicId = session.public_id;
+            chatItem.dataset.sessionId = session.id;
+            if (session.id === currentSessionId) {
+                chatItem.classList.add('active');
+            }
+
+            const date = new Date(session.updated_at);
+            chatItem.innerHTML = `
+                <div class="chat-item-content">
+                    <div class="chat-title">${session.title}</div>
+                    <div class="chat-meta">${session.message_count} messages • ${date.toLocaleDateString()}</div>
+                </div>
+                <button class="delete-chat-btn" onclick="event.stopPropagation(); deleteSession('${session.public_id}')">🗑️</button>
+            `;
+
+            chatItem.onclick = () => switchSession(session.public_id);
+            chatList.appendChild(chatItem);
+        });
+    }
+
+    async function deleteSession(publicId) {
+        if (!confirm('Are you sure you want to delete this chat session?')) {
+            return;
         }
 
-        async function createNewSession() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/sessions/${publicId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.status === 401) {
+                handleLogout();
+                return;
+            }
+            if (!response.ok) throw new Error('Failed to delete session.');
+
+            const deletedSession = chatSessions.find(s => s.public_id === publicId);
+            chatSessions = chatSessions.filter(s => s.public_id !== publicId);
+
+            if (deletedSession && deletedSession.id === currentSessionId) {
+                currentSessionId = null;
+                window.history.pushState({}, "", "/chat");
+                conversationTurns = [];
+                showWelcomeMessage();
+            }
+
+            renderChatSessions();
+        } catch (error) {
+            console.error('Error deleting session:', error);
+            alert('Failed to delete session. Please try again.');
+        }
+    }
+
+    function createNewSession() {
+        window.history.pushState({}, "", "/chat");
+        currentSessionId = null;
+        conversationTurns = [];
+        showWelcomeMessage();
+        renderChatSessions();
+    }
+
+    async function switchSession(publicId) {
+    const session = chatSessions.find(s => s.public_id === publicId);
+    if (!session || session.id === currentSessionId) return;
+    
+    currentSessionId = session.id;
+    window.history.pushState({}, "", `/chat/${publicId}`);
+    renderChatSessions();
+    await loadChatHistory(session.id);
+    }
+
+    async function loadChatHistory(sessionId) {
+        try {
+            const url = `${API_BASE_URL}/history?session_id=${sessionId}`;
+            const response = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.status === 401) {
+                handleLogout();
+                return;
+            }
+            if (!response.ok) throw new Error('Failed to fetch chat history.');
+
+            const history = await response.json();
+            conversationTurns = history;
+
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+
+            if (conversationTurns.length === 0) {
+                showWelcomeMessage();
+            } else {
+                conversationTurns.forEach(turn => {
+                    displayMessage(turn.userQuery, 'user');
+                    const response = turn.aiResponse;
+                    if (response.predefinedResponse) {
+                        displayMessage(response.predefinedResponse, 'ai');
+                    } else {
+                        displayMessage(response.textualResponse || response.highlightedResponse, 'ai', response);
+                    }
+                });
+            }
+
+            scrollToBottom();
+
+        } catch (error) {
+            console.error('Error loading chat history:', error);
+        }
+    }
+
+    // Extended color palette - NO RED colors (red reserved for no-evidence in graph only)
+    const d3ColorScheme = [
+        '#4e79a7', '#f28e2c', '#76b7b2', '#59a14f',
+        '#edc949', '#af7aa1', '#9c755f', '#bab0ab',
+        '#17becf', '#bcbd22', '#9467bd', '#8c564b',
+        '#7f7f7f', '#2ca02c', '#ff7f0e', '#1f77b4',
+        '#4ecdc4', '#95e1d3', '#aa96da', '#fcbad3',
+        '#a8d8ea', '#c7ceea', '#ffd3b6', '#a8e6cf',
+        '#dcedc1', '#6c5ce7', '#00b894', '#fdcb6e',
+        '#e84393', '#0984e3', '#00cec9', '#a29bfe',
+        '#fab1a0', '#74b9ff', '#55efc4', '#ffeaa7',
+        '#55e6c1', '#778beb', '#f8a5c2', '#63cdda'
+    ];
+    
+    const NO_EVIDENCE_COLOR = '#dc2626';
+
+    function normalizeEntity(entity) {
+        return entity.toLowerCase().trim()
+            .replace(/['']s?\b/g, '')
+            .replace(/\s+/g, ' ');
+    }
+
+    function entitiesMatch(entity1, entity2) {
+        const norm1 = normalizeEntity(entity1);
+        const norm2 = normalizeEntity(entity2);
+        
+        if (norm1 === norm2) return true;
+        if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
+        
+        const words1 = norm1.split(/\s+/);
+        const words2 = norm2.split(/\s+/);
+        const commonWords = words1.filter(w => words2.includes(w));
+        
+        if (commonWords.length > 0 && commonWords.length >= Math.min(words1.length, words2.length) * 0.5) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    function buildEntityColorMapFromTriples(validatedTriples) {
+        const colorMap = new Map();
+        const entitiesWithEvidence = new Map();
+        const entitiesWithoutEvidence = new Map();
+        const triplesWithEvidence = [];
+        
+        if (!validatedTriples) return { colorMap, entitiesWithEvidence, triplesWithEvidence };
+        
+        validatedTriples.forEach(triple => {
+            const hasStaticPubmedIds = triple.pubmed_ids && triple.pubmed_ids.length > 0;
+            const hasStaticSentence = triple.sentence && triple.sentence.trim() !== '';
+            const hasStaticKGEvidence = triple.static_kg && triple.static_kg.evidence_found;
+            const hasLiveEvidence = triple.live_pubmed && triple.live_pubmed.found_new_evidence;
+            const status = (triple.status || "").toLowerCase();
+            const hasStatusBasedEvidence = status === 'supported' || 
+                                          status === 'contradictory_evidence' || 
+                                          status === 'emerging_evidence';
+            
+            const hasEvidence = hasStaticPubmedIds || hasStaticSentence || hasStaticKGEvidence || 
+                               hasLiveEvidence || hasStatusBasedEvidence;
+            
+            
+            if (hasEvidence) {
+                triplesWithEvidence.push({
+                    subject: normalizeEntity(triple.subject),
+                    object: normalizeEntity(triple.object),
+                    relation: triple.relation
+                });
+            }
+            if (triple.subject) {
+                const normalized = normalizeEntity(triple.subject);
+                if (hasEvidence) {
+                    entitiesWithEvidence.set(normalized, triple.subject);
+                    entitiesWithoutEvidence.delete(normalized);
+                } else if (!entitiesWithEvidence.has(normalized)) {
+                    entitiesWithoutEvidence.set(normalized, triple.subject);
+                }
+            }
+            
+            if (triple.object) {
+                const normalized = normalizeEntity(triple.object);
+                if (hasEvidence) {
+                    entitiesWithEvidence.set(normalized, triple.object);
+                    entitiesWithoutEvidence.delete(normalized);
+                } else if (!entitiesWithEvidence.has(normalized)) {
+                    entitiesWithoutEvidence.set(normalized, triple.object);
+                }
+            }
+        });
+        
+        let colorIndex = 0;
+        entitiesWithEvidence.forEach((originalEntity, normalizedEntity) => {
+            if (!colorMap.has(normalizedEntity)) {
+                colorMap.set(normalizedEntity, d3ColorScheme[colorIndex % d3ColorScheme.length]);
+                colorIndex++;
+            }
+        });
+        
+        entitiesWithoutEvidence.forEach((originalEntity, normalizedEntity) => {
+            if (!colorMap.has(normalizedEntity)) {
+                colorMap.set(normalizedEntity, NO_EVIDENCE_COLOR);
+            }
+        });
+        
+        return { colorMap, entitiesWithEvidence, entitiesWithoutEvidence, triplesWithEvidence };
+    }
+
+    function highlightEntitiesInText(text, responseData) {
+        if (!responseData || !responseData.highlightedResponse) {
+            return text;
+        }
+
+        const { colorMap, entitiesWithEvidence, triplesWithEvidence } = buildEntityColorMapFromTriples(responseData.validatedTriples);
+
+        const regex = /\*\|(.*?)\|\*/g;
+        let highlightedText = responseData.highlightedResponse;
+        const fullText = highlightedText.toLowerCase();
+        
+        let matches = [];
+        let match;
+        while ((match = regex.exec(highlightedText)) !== null) {
+            matches.push({
+                index: match.index,
+                length: match[0].length,
+                entity: match[1],
+                fullMatch: match[0]
+            });
+        }
+        
+        matches.reverse().forEach(({ index, length, entity, fullMatch }) => {
+            const normalizedEntity = normalizeEntity(entity);
+            
+            const contextStart = Math.max(0, index - 100);
+            const contextEnd = Math.min(fullText.length, index + length + 100);
+            const context = fullText.substring(contextStart, contextEnd);
+            
+            let shouldHighlight = false;
+            let matchedColor = null;
+            
+            for (const triple of triplesWithEvidence) {
+                const isSubject = entitiesMatch(normalizedEntity, triple.subject);
+                const isObject = entitiesMatch(normalizedEntity, triple.object);
+                
+                if (isSubject || isObject) {
+                    const otherEntity = isSubject ? triple.object : triple.subject;
+                    const otherWords = otherEntity.split(/\s+/).filter(w => w.length > 2);
+                    let wordsFound = 0;
+                    
+                    for (const word of otherWords) {
+                        if (context.includes(word)) {
+                            wordsFound++;
+                        }
+                    }
+                    
+                    if (otherWords.length > 0 && wordsFound / otherWords.length >= 0.5) {
+                        shouldHighlight = true;
+                        
+                        for (const [evidenceEntity, color] of colorMap.entries()) {
+                            if (entitiesMatch(normalizedEntity, evidenceEntity)) {
+                                matchedColor = color;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            
+            let replacement;
+            if (shouldHighlight && matchedColor) {
+                replacement = `<span style="background: ${matchedColor}; color: white; padding: 2px 6px; border-radius: 4px; font-weight: 600; white-space: nowrap;">${entity}</span>`;
+            } else {
+                replacement = entity;
+            }
+            
+            highlightedText = highlightedText.substring(0, index) + replacement + highlightedText.substring(index + length);
+        });
+
+        return highlightedText;
+    }
+
+    function displayMessage(text, sender, responseData = null) {
+        const messagesDiv = document.getElementById('messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}`;
+        
+        if (sender === 'ai' && responseData) {
+            const highlightedText = highlightEntitiesInText(text, responseData);
+            messageDiv.innerHTML = highlightedText;
+        } else {
+            messageDiv.textContent = text;
+        }
+
+        if (sender === 'ai' && responseData && (responseData.validatedTriples?.length > 0 || responseData.recommendations?.length > 0)) {
+            const actionsContainer = document.createElement('div');
+            actionsContainer.style.marginTop = '15px';
+            
+            if (responseData.validatedTriples && responseData.validatedTriples.length > 0) {
+                const evidenceBtn = document.createElement('button');
+                evidenceBtn.className = 'evidence-btn';
+                evidenceBtn.textContent = 'Click for Evidence';
+                evidenceBtn.onclick = () => {
+                    localStorage.setItem('currentEvidence', JSON.stringify(responseData));
+                    const currentSession = chatSessions.find(s => s.id === currentSessionId);
+                    const publicId = currentSession ? currentSession.public_id : null;
+                    window.location.href = publicId ? `/evidence/${publicId}` : '/evidence';
+                };
+                actionsContainer.appendChild(evidenceBtn);
+            }
+            
+            if (responseData.recommendations && responseData.recommendations.length > 0) {
+                const recContainer = document.createElement('div');
+                recContainer.className = 'recommendations-container';
+                
+                const title = document.createElement('p');
+                title.textContent = 'Suggested Questions:';
+                recContainer.appendChild(title);
+                
+                responseData.recommendations.forEach(recText => {
+                    const recBtn = document.createElement('button');
+                    recBtn.className = 'recommendation-btn';
+                    recBtn.textContent = recText;
+                    recBtn.onclick = () => {
+                        document.getElementById('queryInput').value = recText;
+                        sendMessage();
+                    };
+                    recContainer.appendChild(recBtn);
+                });
+                
+                actionsContainer.appendChild(recContainer);
+            }
+            
+            messageDiv.appendChild(actionsContainer);
+        }
+
+        messagesDiv.appendChild(messageDiv);
+    }
+
+    let isProcessing = false;
+    let abortController = null;
+
+    async function sendMessage() {
+        const queryInput = document.getElementById('queryInput');
+        const query = queryInput.value.trim();
+        if (!query) return;
+
+        if (isProcessing) {
+            alert('Please wait for the current query to complete or click Stop.');
+            return;
+        }
+
+        const answerLength = document.querySelector('input[name="length"]:checked').value;
+
+        displayMessage(query, 'user');
+        queryInput.value = '';
+
+        // If no session exists, create one first
+        if (!currentSessionId) {
             try {
-                const response = await fetch(`${API_BASE_URL}/sessions`, {
+                const sessionResponse = await fetch(`${API_BASE_URL}/sessions`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -740,465 +1098,171 @@
                     body: JSON.stringify({ title: 'New Chat' })
                 });
 
-                if (response.status === 401) {
+                if (sessionResponse.status === 401) {
                     handleLogout();
                     return;
                 }
-                if (!response.ok) throw new Error('Failed to create session.');
+                if (!sessionResponse.ok) throw new Error('Failed to create session.');
 
-                const newSession = await response.json();
+                const newSession = await sessionResponse.json();
                 currentSessionId = newSession.id;
                 chatSessions.unshift(newSession);
-                
-                conversationTurns = [];
-                const messagesDiv = document.getElementById('messages');
-                messagesDiv.innerHTML = `
-                    <div class="welcome-message">
-                        <h2>Hello! Welcome to Health Assistant</h2>
-                        <p>Ask me anything about health topics and I'll provide evidence-based answers.</p>
-                    </div>
-                `;
+
+                window.history.pushState({}, "", `/chat/${newSession.public_id}`);
                 
                 renderChatSessions();
-
             } catch (error) {
-                console.error('Error creating new session:', error);
+                console.error('Error creating session:', error);
+                alert('Failed to create chat session. Please try again.');
+                return;
             }
         }
 
-        async function switchSession(sessionId) {
-            if (sessionId === currentSessionId) return;
-            
-            currentSessionId = sessionId;
-            renderChatSessions();
-            await loadChatHistory(sessionId);
-        }
+        isProcessing = true;
+        abortController = new AbortController();
+        toggleProcessingUI(true);
 
-        async function loadChatHistory(sessionId) {
+        const thinkingMsg = document.createElement('div');
+        thinkingMsg.className = 'message ai';
+        thinkingMsg.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>';
+        document.getElementById('messages').appendChild(thinkingMsg);
+        scrollToBottom();
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/query`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ 
+                    query, 
+                    answerLength,
+                    session_id: currentSessionId
+                }),
+                signal: abortController.signal
+            });
+
+            thinkingMsg.remove();
+
+            if (response.status === 401) {
+                handleLogout();
+                return;
+            }
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Request failed');
+            }
+
+            const data = await response.json();
+
+            if (data.predefinedResponse) {
+                displayMessage(data.predefinedResponse, 'ai');
+            } else {
+                displayMessage(data.textualResponse || data.highlightedResponse, 'ai', data);
+            }
+
+            scrollToBottom();
+            await refreshSidebar();
+
+        } catch (error) {
+            console.error('Error:', error);
+            thinkingMsg.remove();
+            
+            if (error.name === 'AbortError') {
+                displayMessage('Query stopped by user.', 'ai');
+            } else {
+                displayMessage(`Sorry, an error occurred: ${error.message}`, 'ai');
+            }
+        } finally {
+            isProcessing = false;
+            abortController = null;
+            toggleProcessingUI(false);
+        }
+    }
+
+    function stopProcessing() {
+        if (abortController) {
+            abortController.abort();
+        }
+    }
+
+    function toggleProcessingUI(processing) {
+        const sendBtn = document.getElementById('sendBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const queryInput = document.getElementById('queryInput');
+
+        if (processing) {
+            sendBtn.disabled = true;
+            stopBtn.classList.add('visible');
+            queryInput.disabled = true;
+        } else {
+            sendBtn.disabled = false;
+            stopBtn.classList.remove('visible');
+            queryInput.disabled = false;
+        }
+    }
+
+    function scrollToBottom() {
+        const messagesDiv = document.getElementById('messages');
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function handleLogout() {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('username');
+        window.location.href = '/login.html';
+    }
+
+    // Handle browser back/forward buttons
+    window.addEventListener('popstate', async () => {
+    const urlPublicId = parsePublicIdFromUrl();
+    
+    if (urlPublicId) {
+        const session = chatSessions.find(s => s.public_id === urlPublicId);
+        if (session && session.id !== currentSessionId) {
+            currentSessionId = session.id;
+            await loadChatHistory(session.id);
+        } else if (!session) {
+            // Try fetching the session
             try {
-                const url = `${API_BASE_URL}/history?session_id=${sessionId}`;
-                const response = await fetch(url, {
+                const response = await fetch(`${API_BASE_URL}/sessions/${urlPublicId}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
-
-                if (response.status === 401) {
-                    handleLogout();
-                    return;
-                }
-                if (!response.ok) throw new Error('Failed to fetch chat history.');
-
-                const history = await response.json();
-                conversationTurns = history;
-
-                const messagesDiv = document.getElementById('messages');
-                messagesDiv.innerHTML = '';
-
-                if (conversationTurns.length === 0) {
-                    messagesDiv.innerHTML = `
-                        <div class="welcome-message">
-                            <h2>Hello! Welcome to Health Assistant</h2>
-                            <p>Ask me anything about health topics and I'll provide evidence-based answers.</p>
-                        </div>
-                    `;
+                if (response.ok) {
+                    const sessionData = await response.json();
+                    currentSessionId = sessionData.id;
+                    await loadChatHistory(sessionData.id);
                 } else {
-                    conversationTurns.forEach(turn => {
-                        displayMessage(turn.userQuery, 'user');
-                        const response = turn.aiResponse;
-                        if (response.predefinedResponse) {
-                            displayMessage(response.predefinedResponse, 'ai');
-                        } else {
-                            displayMessage(response.textualResponse || response.highlightedResponse, 'ai', response);
-                        }
-                    });
+                    currentSessionId = null;
+                    conversationTurns = [];
+                    showWelcomeMessage();
                 }
-
-                scrollToBottom();
-
-            } catch (error) {
-                console.error('Error loading chat history:', error);
+            } catch (e) {
+                currentSessionId = null;
+                conversationTurns = [];
+                showWelcomeMessage();
             }
         }
+    } else if (!urlPublicId && currentSessionId) {
+        currentSessionId = null;
+        conversationTurns = [];
+        showWelcomeMessage();
+    }
+    renderChatSessions();
+});
 
-        // Extended color palette - NO RED colors (red reserved for no-evidence in graph only)
-        const d3ColorScheme = [
-            '#4e79a7', '#f28e2c', '#76b7b2', '#59a14f', // blue, orange, teal, green
-            '#edc949', '#af7aa1', '#9c755f', '#bab0ab', // yellow, purple, brown, gray
-            '#17becf', '#bcbd22', '#9467bd', '#8c564b', // cyan, olive, violet, chocolate
-            '#7f7f7f', '#2ca02c', '#ff7f0e', '#1f77b4', // steel gray, forest green, dark orange, steel blue
-            '#4ecdc4', '#95e1d3', '#aa96da', '#fcbad3', // turquoise, mint, lavender, light pink
-            '#a8d8ea', '#c7ceea', '#ffd3b6', '#a8e6cf', // sky blue, periwinkle, peach, seafoam
-            '#dcedc1', '#6c5ce7', '#00b894', '#fdcb6e', // pistachio, bright purple, emerald, sunflower
-            '#e84393', '#0984e3', '#00cec9', '#a29bfe', // magenta, azure, caribbean, periwinkle blue
-            '#fab1a0', '#74b9ff', '#55efc4', '#ffeaa7', // terracotta, baby blue, aqua green, cream
-            '#55e6c1', '#778beb', '#f8a5c2', '#63cdda'  // mint green, blue purple, pink, blue teal
-        ];
-        
-        const NO_EVIDENCE_COLOR = '#dc2626'; // Red - NOT used in chat highlights (only in graph)
+    // Event Listeners
+    document.getElementById('newChatBtn').addEventListener('click', createNewSession);
+    document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+    document.getElementById('sendBtn').addEventListener('click', sendMessage);
+    document.getElementById('stopBtn').addEventListener('click', stopProcessing);
+    document.getElementById('queryInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !isProcessing) sendMessage();
+    });
 
-        function normalizeEntity(entity) {
-            // Normalize entity for matching (lowercase, trim, remove possessives, etc.)
-            return entity.toLowerCase().trim()
-                .replace(/['']s?\b/g, '') // Remove 's or '
-                .replace(/\s+/g, ' '); // Normalize spaces
-        }
-
-        function entitiesMatch(entity1, entity2) {
-            // Check if two entities match (exact or close match)
-            const norm1 = normalizeEntity(entity1);
-            const norm2 = normalizeEntity(entity2);
-            
-            // Exact match
-            if (norm1 === norm2) return true;
-            
-            // One contains the other (for partial matches like "alzheimer" vs "alzheimer's disease")
-            if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
-            
-            // Split by spaces and check if main words match
-            const words1 = norm1.split(/\s+/);
-            const words2 = norm2.split(/\s+/);
-            const commonWords = words1.filter(w => words2.includes(w));
-            
-            // If they share significant words, consider it a match
-            if (commonWords.length > 0 && commonWords.length >= Math.min(words1.length, words2.length) * 0.5) {
-                return true;
-            }
-            
-            return false;
-        }
-
-        function buildEntityColorMapFromTriples(validatedTriples) {
-            // Build color map based on TRIPLES that have evidence (not just entities)
-            const colorMap = new Map();
-            const entitiesWithEvidence = new Map(); // Store original entity names
-            const triplesWithEvidence = []; // Store triples that have evidence
-            
-            if (!validatedTriples) return { colorMap, entitiesWithEvidence, triplesWithEvidence };
-            
-            validatedTriples.forEach(triple => {
-                // Check if triple has evidence (either static KG or live PubMed)
-                const hasStaticEvidence = (triple.pubmed_ids && triple.pubmed_ids.length > 0) || 
-                                         triple.sentence ||
-                                         (triple.static_kg && triple.static_kg.evidence_found);
-                const hasLiveEvidence = triple.live_pubmed && triple.live_pubmed.found_new_evidence;
-                
-                if (hasStaticEvidence || hasLiveEvidence) {
-                    // This triple has evidence - store the triple and its entities
-                    triplesWithEvidence.push({
-                        subject: normalizeEntity(triple.subject),
-                        object: normalizeEntity(triple.object),
-                        relation: triple.relation
-                    });
-                    
-                    // Add entities to color map
-                    if (triple.subject) {
-                        const normalized = normalizeEntity(triple.subject);
-                        entitiesWithEvidence.set(normalized, triple.subject);
-                    }
-                    if (triple.object) {
-                        const normalized = normalizeEntity(triple.object);
-                        entitiesWithEvidence.set(normalized, triple.object);
-                    }
-                }
-            });
-            
-            // Assign colors to entities with evidence in order
-            let colorIndex = 0;
-            entitiesWithEvidence.forEach((originalEntity, normalizedEntity) => {
-                if (!colorMap.has(normalizedEntity)) {
-                    colorMap.set(normalizedEntity, d3ColorScheme[colorIndex % d3ColorScheme.length]);
-                    colorIndex++;
-                }
-            });
-            
-            return { colorMap, entitiesWithEvidence, triplesWithEvidence };
-        }
-
-        function highlightEntitiesInText(text, responseData) {
-            if (!responseData) {
-                return text;
-            }
-
-            // If no highlightedResponse, return plain text
-            if (!responseData.highlightedResponse) {
-                return text;
-            }
-
-            // Build color map from triples that have evidence (not just entities)
-            const { colorMap, entitiesWithEvidence, triplesWithEvidence } = buildEntityColorMapFromTriples(responseData.validatedTriples);
-
-            // Parse the highlightedResponse markers (*|entity|*) and apply colors ONLY if in context
-            const regex = /\*\|(.*?)\|\*/g;
-            let highlightedText = responseData.highlightedResponse;
-            const fullText = highlightedText.toLowerCase();
-            
-            // Process each match with context awareness
-            let matches = [];
-            let match;
-            while ((match = regex.exec(highlightedText)) !== null) {
-                matches.push({
-                    index: match.index,
-                    length: match[0].length,
-                    entity: match[1],
-                    fullMatch: match[0]
-                });
-            }
-            
-            // Process in reverse to maintain indices
-            matches.reverse().forEach(({ index, length, entity, fullMatch }) => {
-                const normalizedEntity = normalizeEntity(entity);
-                
-                // Get context around this occurrence (100 chars before and after)
-                const contextStart = Math.max(0, index - 100);
-                const contextEnd = Math.min(fullText.length, index + length + 100);
-                const context = fullText.substring(contextStart, contextEnd);
-                
-                let shouldHighlight = false;
-                let matchedColor = null;
-                
-                // Check if this occurrence is part of a triple with evidence
-                for (const triple of triplesWithEvidence) {
-                    // Check if this entity is the subject or object of this triple
-                    const isSubject = entitiesMatch(normalizedEntity, triple.subject);
-                    const isObject = entitiesMatch(normalizedEntity, triple.object);
-                    
-                    if (isSubject || isObject) {
-                        // Check if the OTHER entity from the triple is in the context
-                        const otherEntity = isSubject ? triple.object : triple.subject;
-                        
-                        // Split into words and check for presence in context
-                        const otherWords = otherEntity.split(/\s+/).filter(w => w.length > 2);
-                        let wordsFound = 0;
-                        
-                        for (const word of otherWords) {
-                            if (context.includes(word)) {
-                                wordsFound++;
-                            }
-                        }
-                        
-                        // If majority of words from other entity are in context, this is the right occurrence
-                        if (otherWords.length > 0 && wordsFound / otherWords.length >= 0.5) {
-                            shouldHighlight = true;
-                            
-                            // Get the color for this specific entity
-                            for (const [evidenceEntity, color] of colorMap.entries()) {
-                                if (entitiesMatch(normalizedEntity, evidenceEntity)) {
-                                    matchedColor = color;
-                                    break;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
-                
-                // Replace the match
-                let replacement;
-                if (shouldHighlight && matchedColor) {
-                    replacement = `<span style="background: ${matchedColor}; color: white; padding: 2px 6px; border-radius: 4px; font-weight: 600; white-space: nowrap;">${entity}</span>`;
-                } else {
-                    // No evidence or not in triple context - show as plain text
-                    replacement = entity;
-                }
-                
-                highlightedText = highlightedText.substring(0, index) + replacement + highlightedText.substring(index + length);
-            });
-
-            return highlightedText;
-        }
-
-        function displayMessage(text, sender, responseData = null) {
-            const messagesDiv = document.getElementById('messages');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${sender}`;
-            
-            // Apply entity highlighting with KG graph colors for AI messages
-            if (sender === 'ai' && responseData) {
-                const highlightedText = highlightEntitiesInText(text, responseData);
-                messageDiv.innerHTML = highlightedText;
-            } else {
-                messageDiv.textContent = text;
-            }
-
-            // Create a container for button and recommendations
-            if (sender === 'ai' && responseData && (responseData.validatedTriples?.length > 0 || responseData.recommendations?.length > 0)) {
-                const actionsContainer = document.createElement('div');
-                actionsContainer.style.marginTop = '15px';
-                
-                // Add evidence button if available
-                if (responseData.validatedTriples && responseData.validatedTriples.length > 0) {
-                    const evidenceBtn = document.createElement('button');
-                    evidenceBtn.className = 'evidence-btn';
-                    evidenceBtn.textContent = 'Click for Evidence';
-                    evidenceBtn.onclick = () => {
-                        // Store evidence data and navigate to evidence page
-                        localStorage.setItem('currentEvidence', JSON.stringify(responseData));
-                        window.location.href = './evidence.html';
-                    };
-                    actionsContainer.appendChild(evidenceBtn);
-                }
-                
-                // Add recommendations below the evidence button
-                if (responseData.recommendations && responseData.recommendations.length > 0) {
-                    const recContainer = document.createElement('div');
-                    recContainer.className = 'recommendations-container';
-                    
-                    const title = document.createElement('p');
-                    title.textContent = 'Suggested Questions:';
-                    recContainer.appendChild(title);
-                    
-                    responseData.recommendations.forEach(recText => {
-                        const recBtn = document.createElement('button');
-                        recBtn.className = 'recommendation-btn';
-                        recBtn.textContent = recText;
-                        recBtn.onclick = () => {
-                            document.getElementById('queryInput').value = recText;
-                            sendMessage();
-                        };
-                        recContainer.appendChild(recBtn);
-                    });
-                    
-                    actionsContainer.appendChild(recContainer);
-                }
-                
-                messageDiv.appendChild(actionsContainer);
-            }
-
-            messagesDiv.appendChild(messageDiv);
-        }
-
-        let isProcessing = false;
-        let abortController = null;
-
-        async function sendMessage() {
-            const queryInput = document.getElementById('queryInput');
-            const query = queryInput.value.trim();
-            if (!query) return;
-
-            // Prevent multiple queries at once
-            if (isProcessing) {
-                alert('Please wait for the current query to complete or click Stop.');
-                return;
-            }
-
-            if (!currentSessionId) {
-                alert('Please create or select a chat session first.');
-                return;
-            }
-
-            const answerLength = document.querySelector('input[name="length"]:checked').value;
-
-            displayMessage(query, 'user');
-            queryInput.value = '';
-
-            // Set processing state
-            isProcessing = true;
-            abortController = new AbortController();
-            toggleProcessingUI(true);
-
-            const thinkingMsg = document.createElement('div');
-            thinkingMsg.className = 'message ai';
-            thinkingMsg.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>';
-            document.getElementById('messages').appendChild(thinkingMsg);
-            scrollToBottom();
-
-            try {
-                const response = await fetch(`${API_BASE_URL}/query`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ 
-                        query, 
-                        answerLength,
-                        session_id: currentSessionId
-                    }),
-                    signal: abortController.signal
-                });
-
-                thinkingMsg.remove();
-
-                if (response.status === 401) {
-                    handleLogout();
-                    return;
-                }
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || 'Request failed');
-                }
-
-                const data = await response.json();
-
-                if (data.predefinedResponse) {
-                    displayMessage(data.predefinedResponse, 'ai');
-                } else {
-                    displayMessage(data.textualResponse || data.highlightedResponse, 'ai', data);
-                }
-
-                scrollToBottom();
-                await loadChatSessions(true);
-
-            } catch (error) {
-                console.error('Error:', error);
-                thinkingMsg.remove();
-                
-                if (error.name === 'AbortError') {
-                    displayMessage('Query stopped by user.', 'ai');
-                } else {
-                    displayMessage(`Sorry, an error occurred: ${error.message}`, 'ai');
-                }
-            } finally {
-                // Reset processing state
-                isProcessing = false;
-                abortController = null;
-                toggleProcessingUI(false);
-            }
-        }
-
-        function stopProcessing() {
-            if (abortController) {
-                abortController.abort();
-            }
-        }
-
-        function toggleProcessingUI(processing) {
-            const sendBtn = document.getElementById('sendBtn');
-            const stopBtn = document.getElementById('stopBtn');
-            const queryInput = document.getElementById('queryInput');
-
-            if (processing) {
-                sendBtn.disabled = true;
-                stopBtn.classList.add('visible');
-                queryInput.disabled = true;
-            } else {
-                sendBtn.disabled = false;
-                stopBtn.classList.remove('visible');
-                queryInput.disabled = false;
-            }
-        }
-
-        function scrollToBottom() {
-            const messagesDiv = document.getElementById('messages');
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function handleLogout() {
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('username');
-            window.location.href = './login.html';
-        }
-
-        // Event Listeners
-        document.getElementById('newChatBtn').addEventListener('click', createNewSession);
-        document.getElementById('logoutBtn').addEventListener('click', handleLogout);
-        document.getElementById('sendBtn').addEventListener('click', sendMessage);
-        document.getElementById('stopBtn').addEventListener('click', stopProcessing);
-        document.getElementById('queryInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !isProcessing) sendMessage();
-        });
-
-        // Initialize
-        loadChatSessions();
+    // Initialize
+    loadChatSessions();
     </script>
 </body>
 </html>
