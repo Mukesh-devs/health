@@ -90,11 +90,11 @@ def create_app(config_name='default'):
         from .contradiction_detector import init_contradiction_detector
         
         print("Initializing knowledge graph and embeddings...")
-        kg_df, nodes_df = load_knowledge_graph()
         
         from .hf_cache import download_if_missing
 
         download_if_missing()
+        kg_df, nodes_df = load_knowledge_graph()
 
         # Initialize sentence transformer model
         initialize_model()

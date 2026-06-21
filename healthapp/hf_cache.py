@@ -3,8 +3,8 @@ import requests
 
 
 def download_if_missing():
-    cache_dir = "cache"
-    os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs("cache", exist_ok=True)
+    os.makedirs("dataset", exist_ok=True)
 
     files = [
         (
@@ -14,6 +14,14 @@ def download_if_missing():
         (
             "cache/metadata.pkl",
             os.getenv("FAISS_METADATA_URL")
+        ),
+        (
+            "dataset/neo4j_node.csv",
+            os.getenv("KG_NODE_URL")
+        ),
+        (
+            "dataset/neo4j_rel.csv",
+            os.getenv("KG_REL_URL")
         )
     ]
 
@@ -23,9 +31,10 @@ def download_if_missing():
             size_mb = os.path.getsize(file_path) / (1024 * 1024)
 
             if size_mb > 1:
-                print(f"✓ Using cached file: {file_path}")
+                print(f"✓ Using cached file: {file_path} ({size_mb:.2f} MB)")
                 continue
 
+            print(f"⚠ Corrupted file detected: {file_path}")
             os.remove(file_path)
 
         if not url:
@@ -38,12 +47,16 @@ def download_if_missing():
         response = requests.get(
             url,
             stream=True,
-            timeout=300
+            timeout=600
         )
         response.raise_for_status()
 
         with open(file_path, "wb") as f:
-            for chunk in response.iter_content(8192):
-                f.write(chunk)
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
 
-        print(f"✓ Downloaded {file_path}")
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        print(f"✓ Downloaded {file_path} ({size_mb:.2f} MB)")
+
+    print("✓ All required files are available")
