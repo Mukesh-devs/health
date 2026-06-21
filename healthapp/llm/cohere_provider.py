@@ -1,14 +1,12 @@
 import requests
 
 
-class OpenAIProvider:
+class CohereProvider:
 
     SUPPORTED_MODELS = [
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
-        "gpt-4o",
-        "gpt-4o-mini"
+        "command-r-plus",
+        "command-r",
+        "command-a-03-2025"
     ]
 
     def __init__(self, api_key):
@@ -20,22 +18,23 @@ class OpenAIProvider:
 
     def generate(self, model, prompt):
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://api.cohere.com/v1/chat",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             },
             json={
                 "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+                "message": prompt,
                 "temperature": 0.2
             }
         )
         response.raise_for_status()
 
-        return response.json()["choices"][0]["message"]["content"]
+        data = response.json()
+        if "text" in data:
+            return data["text"]
+        if "message" in data and isinstance(data["message"], str):
+            return data["message"]
+
+        raise ValueError("Unexpected Cohere response format")

@@ -1,14 +1,13 @@
 import requests
 
 
-class OpenAIProvider:
+class MistralProvider:
 
     SUPPORTED_MODELS = [
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
-        "gpt-4o",
-        "gpt-4o-mini"
+        "mistral-large-latest",
+        "mistral-small-latest",
+        "ministral-8b-latest",
+        "codestral-latest"
     ]
 
     def __init__(self, api_key):
@@ -20,7 +19,7 @@ class OpenAIProvider:
 
     def generate(self, model, prompt):
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://api.mistral.ai/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
@@ -38,4 +37,5 @@ class OpenAIProvider:
         )
         response.raise_for_status()
 
-        return response.json()["choices"][0]["message"]["content"]
+        data = response.json()
+        return data["choices"][0]["message"]["content"]

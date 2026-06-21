@@ -3,12 +3,13 @@ Query Processing Blueprint
 """
 import time
 import json
+import re
 from datetime import datetime, timezone
-from flask import Blueprint, request, jsonify, current_app, g
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-import requests
 from . import db
 from .models import ChatHistory, ChatSession
+from .providers import LLMProviderFactory
 from .embedding import (
     validate_triple, 
     generate_recommendations, 
@@ -26,6 +27,64 @@ RULE_BASED_RESPONSES = {
     "thanks": "You're welcome! Let me know if you have more questions.",
     "thank you": "You're most welcome! Is there anything else I can help you explore?"
 }
+
+
+def build_llm_prompt(user_query, answer_length, recent_chats):
+    prompt_lines = [
+        "You are an expert health information system.",
+        "Respond to the user's query and extract key facts as a list of subject-relation-object triples.",
+        "Return valid JSON only with these fields:",
+        '{"textualResponse": "...", "highlightedResponse": "...", "triples": [{"subject": "...", "relation": "...", "object": "..."}]}',
+        "The highlightedResponse must be identical to the textualResponse, but wrap every extracted subject and object entity in '*|' and '|*' markers.",
+        "Do not add markdown fences, explanations, or extra keys.",
+        f'The user\'s desired answer length is "{answer_length}".',
+        "",
+        "Conversation history:"
+    ]
+
+    if recent_chats:
+        for chat in recent_chats:
+            prompt_lines.append(f"User: {chat.query}")
+            ai_text = chat.response_data.get('predefinedResponse') or chat.response_data.get('textualResponse')
+            if ai_text:
+                prompt_lines.append(f"Assistant: {ai_text}")
+    else:
+        prompt_lines.append("No prior conversation history.")
+
+    prompt_lines.extend([
+        "",
+        f"User query: {user_query}",
+        "",
+        "Remember: output JSON only."
+    ])
+
+    return "\n".join(prompt_lines)
+
+
+def parse_llm_json(text):
+    raw_text = text.strip()
+    if raw_text.startswith("```"):
+        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r"\s*```$", "", raw_text)
+
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        start = raw_text.find("{")
+        end = raw_text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(raw_text[start:end + 1])
+        raise
+
+
+@query_bp.route('/providers/<provider>/models', methods=['GET'])
+@jwt_required()
+def get_provider_models(provider):
+    try:
+        models = LLMProviderFactory.get_model_options(provider)
+        return jsonify({"models": models}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
 @query_bp.route('/query', methods=['POST'])
 @jwt_required()
@@ -63,6 +122,11 @@ def handle_query():
             print(f"{YELLOW}[WARNING] Empty query received{RESET}")
             return jsonify({"error": "Empty query"}), 400
 
+        provider_name = data.get("provider", "google")
+        model_name = data.get("model")
+        api_key = (data.get("apiKey") or request.headers.get("X-API-Key") or "").strip()
+        normalized_provider = LLMProviderFactory.normalize_provider_name(provider_name)
+
         # Handle rule-based responses
         print(f"\n{YELLOW}{'─'*80}{RESET}")
         print(f"{YELLOW}[STEP 1/8] Rule-Based Response Check{RESET}")
@@ -70,6 +134,8 @@ def handle_query():
         print(f"{CYAN}Checking if query matches predefined patterns...{RESET}")
         print(f"{BLUE}  Query (lowercase): '{user_query.lower()}'{RESET}")
         print(f"{BLUE}  Available rules: {list(RULE_BASED_RESPONSES.keys())}{RESET}")
+        print(f"{BLUE}  Provider:{RESET} {normalized_provider}{RESET}")
+        print(f"{BLUE}  Model:{RESET} {model_name}{RESET}")
         
         query_lower = user_query.lower().strip()
         if query_lower in RULE_BASED_RESPONSES:
@@ -124,12 +190,42 @@ def handle_query():
         print(f"{YELLOW}⚠ No rule match found{RESET}")
         print(f"{YELLOW}  Action: Proceed to LLM for intelligent response{RESET}")
 
+        if not normalized_provider:
+            return jsonify({"error": f"Unsupported provider: {provider_name}"}), 400
+
+        if not model_name:
+            model_name = LLMProviderFactory.get_default_model(normalized_provider)
+
+        if not LLMProviderFactory.is_supported_model(normalized_provider, model_name):
+            return jsonify({
+                "error": f"Unsupported model '{model_name}' for provider '{normalized_provider}'",
+                "models": LLMProviderFactory.get_model_options(normalized_provider)
+            }), 400
+
+        if normalized_provider in {"gemini", "google"} and not api_key:
+            gemini_api_url = current_app.config.get('GEMINI_API_URL')
+            if not gemini_api_url:
+                return jsonify({"error": "Gemini API URL is not configured"}), 400
+
+            provider = LLMProviderFactory.get_provider(
+                normalized_provider,
+                api_url=gemini_api_url
+            )
+        else:
+            if not api_key:
+                return jsonify({"error": f"API key is required for provider '{normalized_provider}'"}), 400
+
+            provider = LLMProviderFactory.get_provider(
+                normalized_provider,
+                api_key=api_key
+            )
+
         # Get recent chats from the same session if provided
         print(f"\n{YELLOW}{'─'*80}{RESET}")
         print(f"{YELLOW}[STEP 2/8] Loading Conversation History{RESET}")
         print(f"{YELLOW}{'─'*80}{RESET}")
         print(f"{CYAN}Retrieving conversation context from database...{RESET}")
-        
+
         if session_id:
             print(f"{BLUE}  Filter: session_id={session_id}, user_id={current_user_id}{RESET}")
             recent_chats_query = (
@@ -146,178 +242,70 @@ def handle_query():
                 .order_by(ChatHistory.timestamp.desc())
                 .limit(5)
             )
-        
+
         print(f"{BLUE}  Limit: 5 most recent messages{RESET}")
         recent_chats = db.session.scalars(recent_chats_query).all()
         recent_chats = list(reversed(recent_chats))
-        
+
         print(f"{GREEN}✓ Loaded {len(recent_chats)} previous messages{RESET}")
         if recent_chats:
             print(f"{BLUE}  Context window: {len(recent_chats)} messages{RESET}")
-            for i, chat in enumerate(recent_chats[-3:], 1):  # Show last 3
+            for i, chat in enumerate(recent_chats[-3:], 1):
                 preview = chat.query[:50] + "..." if len(chat.query) > 50 else chat.query
                 print(f"{BLUE}    {i}. [{chat.timestamp.strftime('%H:%M:%S')}] {preview}{RESET}")
         else:
             print(f"{YELLOW}  ℹ No previous conversation history{RESET}")
 
-        # Build conversation history for API
         print(f"\n{CYAN}Building conversation history for LLM context...{RESET}")
-        history_for_api = []
+        total_chars = 0
         for chat in recent_chats:
-            history_for_api.append({'source': 'user', 'text': chat.query})
-            ai_text = (
-                chat.response_data.get('predefinedResponse') or 
-                chat.response_data.get('textualResponse')
-            )
+            total_chars += len(chat.query)
+            ai_text = chat.response_data.get('predefinedResponse') or chat.response_data.get('textualResponse')
             if ai_text:
-                history_for_api.append({'source': 'model', 'text': ai_text})
-        
-        print(f"{GREEN}✓ History prepared: {len(history_for_api)} messages{RESET}")
-        
-        # Calculate token estimate
-        total_chars = sum(len(msg['text']) for msg in history_for_api)
-        estimated_tokens = total_chars // 4  # Rough estimate: 4 chars per token
+                total_chars += len(ai_text)
+
+        estimated_tokens = total_chars // 4
+        print(f"{GREEN}✓ History prepared: {len(recent_chats)} messages{RESET}")
         print(f"{BLUE}  Total characters: {total_chars:,}{RESET}")
         print(f"{BLUE}  Estimated tokens: ~{estimated_tokens}{RESET}")
 
-        # Prepare system instruction
         print(f"\n{YELLOW}{'─'*80}{RESET}")
         print(f"{YELLOW}[STEP 3/8] Preparing LLM Request{RESET}")
         print(f"{YELLOW}{'─'*80}{RESET}")
-        print(f"{CYAN}Creating system instruction for LLM...{RESET}")
-        
-        system_instruction_text = f"""You are an expert health information system. Your task is to respond to the user's query and extract key facts as a list of subject-relation-object triples.
-- Provide a factual, concise response in the 'textualResponse' field.
-- **Critically, you must also provide a 'highlightedResponse'. This response should be identical to the textualResponse, but with all extracted subject and object entities wrapped in '*|' and '|*' markers.** For example, if a sentence is "Aspirin treats headaches", the highlighted version must be "*|Aspirin|* treats *|headaches|*".
-- Identify and extract key entities and relationships into the 'triples' field.
-- Follow the JSON schema strictly. Do not add extra explanations.
-- The user's desired answer length is "{answer_length}"."""
-        
-        system_instruction = {
-            "role": "system",
-            "parts": [{
-                "text": system_instruction_text
-            }]
-        }
-        
-        print(f"{GREEN}✓ System instruction created{RESET}")
-        print(f"{BLUE}  Length: {len(system_instruction_text)} characters{RESET}")
-        print(f"{BLUE}  Answer length preference: {answer_length}{RESET}")
-        print(f"{BLUE}  Response format: JSON with schema validation{RESET}")
-        
-        # Define response schema
-        print(f"\n{CYAN}Defining response schema for structured output...{RESET}")
-        response_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "textualResponse": {"type": "STRING"},
-                "highlightedResponse": {"type": "STRING"},
-                "triples": {
-                    "type": "ARRAY",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "subject": {"type": "STRING"}, 
-                            "relation": {"type": "STRING"}, 
-                            "object": {"type": "STRING"}
-                        },
-                        "required": ["subject", "relation", "object"]
-                    }
-                }
-            },
-            "required": ["textualResponse", "highlightedResponse", "triples"]
-        }
-        print(f"{GREEN}✓ Response schema defined{RESET}")
-        print(f"{BLUE}  Required fields: textualResponse, highlightedResponse, triples{RESET}")
-        print(f"{BLUE}  Triple fields: subject, relation, object{RESET}")
-        
-        # Format history for Gemini API
-        print(f"\n{CYAN}Formatting conversation history for Gemini API...{RESET}")
-        formatted_history = []
-        for entry in history_for_api:
-            role = "user" if entry.get('source') == 'user' else "model"
-            formatted_history.append({
-                "role": role, 
-                "parts": [{"text": entry.get('text', '')}]
-            })
-        
-        formatted_history.append({
-            "role": "user", 
-            "parts": [{"text": user_query}]
-        })
-        print(f"{GREEN}✓ Formatted {len(formatted_history)} messages for LLM{RESET}")
-        print(f"{BLUE}  User messages: {sum(1 for m in formatted_history if m['role'] == 'user')}{RESET}")
-        print(f"{BLUE}  Model messages: {sum(1 for m in formatted_history if m['role'] == 'model')}{RESET}")
+        print(f"{CYAN}Creating provider prompt...{RESET}")
 
-        # Prepare API payload
-        print(f"\n{CYAN}Assembling final API payload...{RESET}")
-        payload = {
-            "contents": formatted_history,
-            "system_instruction": system_instruction,
-            "generationConfig": {
-                "response_mime_type": "application/json",
-                "response_schema": response_schema
-            }
-        }
-        
-        payload_size = len(json.dumps(payload))
-        print(f"{GREEN}✓ Payload assembled{RESET}")
-        print(f"{BLUE}  Payload size: {payload_size:,} bytes (~{payload_size/1024:.2f} KB){RESET}")
-        print(f"{BLUE}  Contents messages: {len(formatted_history)}{RESET}")
-        print(f"{BLUE}  Response format: application/json{RESET}")
-        
-        # Call Gemini API
+        prompt_text = build_llm_prompt(user_query, answer_length, recent_chats)
+
+        print(f"{GREEN}✓ Prompt created{RESET}")
+        print(f"{BLUE}  Length: {len(prompt_text)} characters{RESET}")
+        print(f"{BLUE}  Answer length preference: {answer_length}{RESET}")
+        print(f"{BLUE}  Response format: JSON only{RESET}")
+
         print(f"\n{YELLOW}{'─'*80}{RESET}")
-        print(f"{YELLOW}[STEP 4/8] Calling Gemini LLM API{RESET}")
+        print(f"{YELLOW}[STEP 4/8] Calling LLM Provider API{RESET}")
         print(f"{YELLOW}{'─'*80}{RESET}")
-        
-        api_url = current_app.config['GEMINI_API_URL']
-        print(f"{CYAN}Sending request to Gemini API...{RESET}")
-        print(f"{BLUE}  API URL: {api_url[:80]}...{RESET}")
-        print(f"{BLUE}  Model: gemini-1.5-flash{RESET}")
-        print(f"{BLUE}  Request method: POST{RESET}")
+
+        print(f"{CYAN}Sending request to provider API...{RESET}")
+        print(f"{BLUE}  Provider: {normalized_provider}{RESET}")
+        print(f"{BLUE}  Model: {model_name}{RESET}")
         print(f"{BLUE}  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{RESET}")
-        
+
         llm_start_time = time.time()
         print(f"{MAGENTA}⏳ Waiting for LLM response...{RESET}")
-        
-        response = requests.post(
-            api_url, 
-            headers={'Content-Type': 'application/json'}, 
-            data=json.dumps(payload)
-        )
-        response.raise_for_status()
+
+        llm_text = provider.generate(model_name, prompt_text)
         llm_duration = time.time() - llm_start_time
-        
+
         print(f"{GREEN}✓ LLM API call completed successfully!{RESET}")
         print(f"{GREEN}  Response time: {llm_duration:.3f}s{RESET}")
-        print(f"{GREEN}  Status code: {response.status_code}{RESET}")
-        
-        response_size = len(response.content)
-        print(f"{BLUE}  Response size: {response_size:,} bytes (~{response_size/1024:.2f} KB){RESET}")
-        
+        print(f"{BLUE}  Response size: {len(llm_text):,} characters{RESET}")
+
         print(f"\n{YELLOW}{'─'*80}{RESET}")
         print(f"{YELLOW}[STEP 5/8] Processing LLM Response{RESET}")
         print(f"{YELLOW}{'─'*80}{RESET}")
-        
-        print(f"{CYAN}Parsing JSON response from LLM...{RESET}")
-        llm_response = response.json()
-        
-        print(f"{BLUE}  Response structure:{RESET}")
-        print(f"{BLUE}    - candidates: {len(llm_response.get('candidates', []))}{RESET}")
-        
-        if not llm_response.get('candidates'):
-            print(f"{RED}✗ ERROR: No candidates in LLM response{RESET}")
-            raise ValueError("Invalid LLM response: No candidates found.")
-        
-        print(f"{GREEN}✓ Found {len(llm_response['candidates'])} candidate(s){RESET}")
-        
-        # Extract the text from the first candidate
-        llm_text = llm_response['candidates'][0]['content']['parts'][0]['text']
-        print(f"{BLUE}  Raw LLM output size: {len(llm_text)} characters{RESET}")
-        
-        print(f"\n{CYAN}Parsing structured JSON output...{RESET}")
-        llm_data = json.loads(llm_text)
+
+        print(f"{CYAN}Parsing structured JSON output...{RESET}")
+        llm_data = parse_llm_json(llm_text)
         
         print(f"{GREEN}✓ JSON parsed successfully{RESET}")
         print(f"{BLUE}  Keys found: {list(llm_data.keys())}{RESET}")
