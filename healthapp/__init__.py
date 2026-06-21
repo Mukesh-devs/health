@@ -92,11 +92,20 @@ def create_app(config_name='default'):
         print("Initializing knowledge graph and embeddings...")
         kg_df, nodes_df = load_knowledge_graph()
         
+        from .hf_cache import download_if_missing
+
+        download_if_missing()
+
         # Initialize sentence transformer model
         initialize_model()
-        
+
         # Load embeddings
         load_embeddings(nodes_df)
+        # # Initialize sentence transformer model
+        # initialize_model()
+        
+        # # Load embeddings
+        # load_embeddings(nodes_df)
         
         # Set KG data for triple validation
         set_kg_data(kg_df)

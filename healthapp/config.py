@@ -14,6 +14,16 @@ class Config:
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
     GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 
+    # FAISS Configuration
+    FAISS_INDEX_PATH = os.environ.get(
+        'FAISS_INDEX_PATH',
+        'cache/faiss.index'
+    )
+
+    FAISS_METADATA_PATH = os.environ.get(
+        'FAISS_METADATA_PATH',
+        'cache/metadata.pkl'
+    )
     
     # Knowledge Graph paths
     KG_REL_PATH = os.environ.get('KG_REL_PATH', 'dataset/neo4j_rel.csv')
