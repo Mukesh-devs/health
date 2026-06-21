@@ -1,7 +1,9 @@
 """
 Health LLM Application Package
 """
-from flask import Flask
+import os
+
+from flask import Flask, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
@@ -12,9 +14,12 @@ db = SQLAlchemy()
 bcrypt = Bcrypt()
 jwt = JWTManager()
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
+
 def create_app(config_name='default'):
     """Application factory pattern"""
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
     
     # Load configuration
     from .config import config
@@ -36,6 +41,34 @@ def create_app(config_name='default'):
     app.register_blueprint(auth_bp, url_prefix='/api')
     app.register_blueprint(sessions_bp, url_prefix='/api')
     app.register_blueprint(query_bp, url_prefix='/api')
+
+    @app.route('/')
+    def home():
+        return send_from_directory(STATIC_DIR, 'login.html')
+
+    @app.route('/login')
+    def login_page():
+        return send_from_directory(STATIC_DIR, 'login.html')
+
+    @app.route('/login.html')
+    def login_page_html():
+        return send_from_directory(STATIC_DIR, 'login.html')
+
+    @app.route('/chat')
+    def chat_page():
+        return send_from_directory(STATIC_DIR, 'chat.html')
+
+    @app.route('/chat.html')
+    def chat_page_html():
+        return send_from_directory(STATIC_DIR, 'chat.html')
+
+    @app.route('/evidence')
+    def evidence_page():
+        return send_from_directory(STATIC_DIR, 'evidence.html')
+
+    @app.route('/evidence.html')
+    def evidence_page_html():
+        return send_from_directory(STATIC_DIR, 'evidence.html')
     
     # Initialize knowledge graph and embeddings
     with app.app_context():
