@@ -10,7 +10,7 @@ python-dotenv==1.1.1
 
 # AI/ML
 sentence-transformers==5.1.1
-torch>=2.9.0,<3.0
+torch==2.8.0
 transformers==4.56.2
 numpy==1.26.4
 scikit-learn==1.1.2
