@@ -1,6 +1,6 @@
-# Health LLM Application
+# Health Evidence Chat: Evidence-Checked LLM Answers
 
-AI-powered health information system using Knowledge Graphs, Semantic Search, and Large Language Models.
+An evidence retrieval system that checks and validates LLM answers to health questions using a biomedical knowledge graph and live PubMed research.
 
 ## 🎯 Overview
 
